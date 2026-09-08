@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dashboard da Loja</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="topbar admin-topbar">
+    <div class="container nav">
+      <div class="brand">Loja Tech</div>
+      <nav>
+        <a href="admin.html">Produtos</a>
+        <a href="dashboard.html">Dashboard</a>
+        <button id="btnTema" class="theme-toggle" type="button" aria-label="Alternar tema" title="Alternar tema"><svg class="header-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"></path></svg></button>
+        <button id="btnLogout" class="logout-btn" type="button" aria-label="Sair da conta" title="Sair da conta"><svg class="header-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><path d="m16 17 5-5-5-5"></path><path d="M21 12H9"></path></svg></button>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container page dashboard-page">
+    <div class="dashboard-heading">
+      <div><p class="eyebrow">VISÃO GERAL</p><h1>Dashboard</h1><p class="subtitle">Acompanhe o desempenho da sua loja em um só lugar.</p></div>
+      <div class="dashboard-actions"><button id="btnRelatorioPlanilha" class="btn btn-secondary" type="button">Baixar planilha</button><button id="btnRelatorioPdf" class="btn btn-primary" type="button">Gerar PDF</button></div>
+    </div>
+    <section class="dashboard-grid">
+      <article class="stat-card">
+        <span>Total de produtos</span>
+        <strong id="totalProdutos">0</strong>
+      </article>
+      <article class="stat-card">
+        <span>Usuários</span>
+        <strong id="totalUsuarios">0</strong>
+      </article>
+      <article class="stat-card">
+        <span>Pedidos</span>
+        <strong id="totalPedidos">0</strong>
+      </article>
+      <article class="stat-card highlight">
+        <span>Vendas</span>
+        <strong id="totalVendas">R$ 0,00</strong>
+      </article>
+      <article class="stat-card">
+        <span>Ticket médio</span>
+        <strong id="ticketMedio">R$ 0,00</strong>
+      </article>
+      <article class="stat-card">
+        <span>Produtos vendidos</span>
+        <strong id="produtosVendidos">0</strong>
+      </article>
+    </section>
+
+    <section class="card panel">
+      <div class="panel-heading"><div><p class="eyebrow">ATIVIDADE RECENTE</p><h2>Últimos pedidos</h2></div><span class="panel-caption">Últimos 5 registros</span></div>
+      <div id="listaVendas" class="lista-vendas"></div>
+    </section>
+
+    <section class="dashboard-charts">
+      <article class="card chart-card chart-wide"><div class="chart-title"><div><p class="eyebrow">RECEITA</p><h2>Vendas por dia</h2></div><span>Últimos registros</span></div><div id="graficoVendasDia" class="bar-chart"></div></article>
+      <article class="card chart-card"><div class="chart-title"><div><p class="eyebrow">MIX DE PRODUTOS</p><h2>Por categoria</h2></div></div><div id="graficoCategorias" class="category-chart"></div></article>
+      <article class="card chart-card"><div class="chart-title"><div><p class="eyebrow">OPERAÇÃO</p><h2>Status dos pedidos</h2></div></div><div id="graficoStatus" class="status-chart"></div></article>
+      <article class="card chart-card stock-card"><div class="chart-title"><div><p class="eyebrow">ATENÇÃO</p><h2>Estoque baixo</h2></div><span>Até 5 unidades</span></div><div id="listaEstoqueBaixo" class="stock-list"></div></article>
+    </section>
+  </main>
+
+  <div id="confirmacaoSaida" class="admin-confirm-backdrop" hidden>
+    <section class="admin-confirm" role="dialog" aria-modal="true" aria-labelledby="tituloConfirmacaoDashboard">
+      <span class="admin-confirm-mark">!</span><h2 id="tituloConfirmacaoDashboard">Você realmente deseja sair?</h2>
+      <p>Sua sessão será encerrada neste dispositivo.</p>
+      <div class="admin-confirm-actions"><button id="btnCancelarSaida" class="btn btn-secondary" type="button">Cancelar</button><button id="btnConfirmarSaida" class="btn btn-primary" type="button">Sair</button></div>
+    </section>
+  </div>
+
+  <script type="module" src="build/dashboard.js?v=2"></script>
+</body>
+</html>

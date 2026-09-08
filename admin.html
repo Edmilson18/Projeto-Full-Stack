@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Administração da Loja</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="topbar admin-topbar">
+    <div class="container nav">
+      <div class="brand">Loja Tech</div>
+      <nav>
+        <a href="dashboard.html">Dashboard</a>
+        <button id="btnTema" class="theme-toggle" type="button" aria-label="Alternar tema" title="Alternar tema">
+          <svg class="header-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"></path></svg>
+        </button>
+        <button id="btnLogout" class="logout-btn" type="button" aria-label="Sair da conta" title="Sair da conta">
+          <svg class="header-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><path d="m16 17 5-5-5-5"></path><path d="M21 12H9"></path></svg>
+        </button>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container page admin-page">
+    <div class="admin-heading">
+      <div>
+        <p class="eyebrow">CENTRAL DO CATÁLOGO</p>
+        <h1>Novo produto</h1>
+        <p class="subtitle">Cadastre um item completo para ele aparecer na vitrine.</p>
+      </div>
+      <div class="admin-status"><span></span> Ambiente administrativo</div>
+    </div>
+
+    <div class="admin-layout">
+      <section class="card admin-card">
+        <div class="form-heading"><h2>Informações do produto</h2><span>01 / 01</span></div>
+
+      <form id="formProduto" class="form-grid">
+        <input id="produtoId" type="hidden" />
+        <div>
+          <label for="nome">Nome</label>
+          <input id="nome" type="text" placeholder="Nome do produto" />
+        </div>
+
+        <div>
+          <label for="preco">Preço</label>
+          <input id="preco" type="number" min="0" step="0.01" placeholder="0.00" />
+        </div>
+
+        <div>
+          <label for="quantidade">Quantidade</label>
+          <input id="quantidade" type="number" min="0" step="1" placeholder="0" />
+        </div>
+
+        <div>
+          <label for="categoria">Categoria</label>
+          <select id="categoria">
+            <option value="">Selecione</option>
+            <option value="cat-eletronicos">Eletrônicos</option>
+            <option value="cat-informatica">Informática</option>
+            <option value="cat-moveis">Móveis</option>
+            <option value="cat-vestuario">Vestuário</option>
+            <option value="cat-outros">Outros</option>
+          </select>
+        </div>
+
+        <div class="campo-amplo">
+          <label for="descricao">Descrição</label>
+          <textarea id="descricao" rows="3" placeholder="Descrição do produto"></textarea>
+        </div>
+
+        <div class="campo-amplo">
+          <label for="imagem">URL da imagem</label>
+          <input id="imagem" type="url" placeholder="https://exemplo.com/produto.jpg" />
+          <small class="field-help">Use uma imagem horizontal ou quadrada com boa resolução.</small>
+        </div>
+
+        <div class="campo-amplo buttons">
+          <button type="reset" class="btn btn-secondary">Limpar</button>
+          <button type="submit" class="btn btn-primary">Salvar produto</button>
+        </div>
+      </form>
+
+      <div id="mensagem" class="mensagem"></div>
+      </section>
+
+      <aside class="admin-aside">
+        <div class="preview-panel">
+          <p class="eyebrow">PRÉ-VISUALIZAÇÃO</p>
+          <div id="imagemPreview" class="image-preview"><span>A imagem do produto aparecerá aqui</span></div>
+          <h3 id="nomePreview">Seu produto</h3>
+          <p id="descricaoPreview">Adicione nome, descrição e imagem para visualizar o resultado.</p>
+        </div>
+        <div class="admin-tip"><strong>Dica de catálogo</strong><p>Descrições objetivas ajudam o cliente a decidir com mais segurança.</p></div>
+      </aside>
+    </div>
+
+    <section class="card management-card">
+      <div class="panel-heading"><div><p class="eyebrow">GERENCIAMENTO</p><h2>Produtos cadastrados</h2></div><input id="buscaProdutosAdmin" class="admin-search" type="search" placeholder="Buscar produto" /></div>
+      <div id="listaProdutosAdmin" class="management-list"></div>
+    </section>
+
+    <section class="card management-card">
+      <div class="panel-heading"><div><p class="eyebrow">OPERAÇÃO</p><h2>Pedidos</h2></div><span class="panel-caption">Atualize o status de entrega</span></div>
+      <div id="listaPedidosAdmin" class="management-list"></div>
+    </section>
+  </main>
+
+  <div id="confirmacaoSaida" class="admin-confirm-backdrop" hidden>
+    <section class="admin-confirm" role="dialog" aria-modal="true" aria-labelledby="tituloConfirmacao">
+      <span class="admin-confirm-mark">!</span>
+      <h2 id="tituloConfirmacao">Você realmente deseja sair?</h2>
+      <p>Sua sessão será encerrada neste dispositivo.</p>
+      <div class="admin-confirm-actions">
+        <button id="btnCancelarSaida" class="btn btn-secondary" type="button">Cancelar</button>
+        <button id="btnConfirmarSaida" class="btn btn-primary" type="button">Sair</button>
+      </div>
+    </section>
+  </div>
+
+  <script type="module" src="build/admin.js"></script>
+</body>
+</html>

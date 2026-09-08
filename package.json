@@ -1,0 +1,28 @@
+{
+  "name": "loja-tech",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently \"tsx src/server.ts\" \"vite\"",
+    "build": "tsc && vite build",
+    "preview": "vite preview --host 0.0.0.0",
+    "start": "node --experimental-sqlite build/server.js",
+    "db:init": "node --experimental-sqlite --import tsx src/database.ts --init"
+  },
+  "dependencies": {
+    "lucide-react": "^1.41.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
+  },
+  "devDependencies": {
+    "@types/node": "^26.4.1",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.7",
+    "@vitejs/plugin-react": "^6.1.1",
+    "concurrently": "^10.0.5",
+    "tsx": "^4.23.12",
+    "typescript": "^7.0.2",
+    "vite": "^8.2.2"
+  }
+}
