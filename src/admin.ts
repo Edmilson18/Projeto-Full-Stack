@@ -1,11 +1,3 @@
-type ProdutoFormulario = {
-  nome: string;
-  preco: number;
-  quantidade: number;
-  categoria: string;
-  descricao: string;
-};
-
 type UsuarioSessao = {
   id: string;
   nome: string;
@@ -49,12 +41,20 @@ const produtoIdInput = document.querySelector<HTMLInputElement>("#produtoId");
 const listaProdutosAdmin = document.querySelector<HTMLDivElement>("#listaProdutosAdmin");
 const listaPedidosAdmin = document.querySelector<HTMLDivElement>("#listaPedidosAdmin");
 const buscaProdutosAdmin = document.querySelector<HTMLInputElement>("#buscaProdutosAdmin");
+const buscaPedidosAdmin = document.querySelector<HTMLInputElement>("#buscaPedidosAdmin");
+const filtroStatusPedido = document.querySelector<HTMLSelectElement>("#filtroStatusPedido");
 const tituloPagina = document.querySelector<HTMLHeadingElement>(".admin-heading h1");
 const botaoSalvar = formulario?.querySelector<HTMLButtonElement>('button[type="submit"]');
 let produtosAdmin: Array<Record<string, unknown>> = [];
+let pedidosAdmin: Array<Record<string, unknown>> = [];
 
-const escaparHtml = (valor: unknown) => String(valor ?? "").replace(/[&<>"']/g, (caractere) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" })[caractere] ?? caractere);
-const formatarMoeda = (valor: unknown) => new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(Number(valor ?? 0));
+const escaparHtml = (valor: unknown) =>
+  String(valor ?? "").replace(
+    /[&<>"']/g,
+    (caractere) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" })[caractere] ?? caractere,
+  );
+const formatarMoeda = (valor: unknown) =>
+  new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(Number(valor ?? 0));
 
 const atualizarPreview = () => {
   const imagem = imagemInput?.value.trim() ?? "";
@@ -65,11 +65,14 @@ const atualizarPreview = () => {
     imagemPreview.classList.toggle("has-image", Boolean(imagem));
   }
   if (nomePreview) nomePreview.textContent = nome || "Seu produto";
-  if (descricaoPreview) descricaoPreview.textContent = descricao || "Adicione nome, descrição e imagem para visualizar o resultado.";
+  if (descricaoPreview)
+    descricaoPreview.textContent = descricao || "Adicione nome, descrição e imagem para visualizar o resultado.";
 };
 
-const iconeSol = '<svg class="header-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"></path></svg>';
-const iconeLua = '<svg class="header-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>';
+const iconeSol =
+  '<svg class="header-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"></path></svg>';
+const iconeLua =
+  '<svg class="header-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>';
 const atualizarIconeTema = (tema: string) => {
   if (btnTema) btnTema.innerHTML = tema === "claro" ? iconeLua : iconeSol;
 };
@@ -130,20 +133,23 @@ formulario?.addEventListener("submit", async (evento) => {
 
   try {
     const editando = Boolean(produtoIdInput?.value);
-    const resposta = await fetch(editando ? `/api/produtos/${encodeURIComponent(produtoIdInput?.value ?? "")}` : "/api/produtos", {
-      method: editando ? "PUT" : "POST",
-      headers: {
-        "Content-Type": "application/json",
+    const resposta = await fetch(
+      editando ? `/api/produtos/${encodeURIComponent(produtoIdInput?.value ?? "")}` : "/api/produtos",
+      {
+        method: editando ? "PUT" : "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          nome,
+          preco,
+          quantidade,
+          categoriaId: categoria,
+          descricao,
+          imagem,
+        }),
       },
-      body: JSON.stringify({
-        nome,
-        preco,
-        quantidade,
-        categoriaId: categoria,
-        descricao,
-        imagem,
-      }),
-    });
+    );
 
     const dados = await resposta.json();
 
@@ -168,37 +174,106 @@ formulario?.addEventListener("submit", async (evento) => {
 const renderizarProdutos = () => {
   if (!listaProdutosAdmin) return;
   const termo = buscaProdutosAdmin?.value.trim().toLocaleLowerCase("pt-BR") ?? "";
-  const itens = produtosAdmin.filter((produto) => `${produto.nome} ${produto.categoria}`.toLocaleLowerCase("pt-BR").includes(termo));
-  listaProdutosAdmin.innerHTML = itens.length ? itens.map((produto) => `<article class="management-row"><div><strong>${escaparHtml(produto.nome)}</strong><small>${escaparHtml(produto.categoria)}</small></div><span>${formatarMoeda(produto.preco)}</span><span>${Number(produto.quantidade)} un.</span><span class="${Number(produto.ativo) ? "status-active" : "status-inactive"}">${Number(produto.ativo) ? "Ativo" : "Inativo"}</span><div class="management-actions"><button data-editar="${escaparHtml(produto.id)}" type="button">Editar</button>${Number(produto.ativo) ? `<button class="danger" data-inativar="${escaparHtml(produto.id)}" type="button">Inativar</button>` : ""}</div></article>`).join("") : '<p class="empty">Nenhum produto encontrado.</p>';
+  const itens = produtosAdmin.filter((produto) =>
+    `${produto.nome} ${produto.categoria}`.toLocaleLowerCase("pt-BR").includes(termo),
+  );
+  listaProdutosAdmin.innerHTML = itens.length
+    ? itens
+        .map(
+          (produto) =>
+            `<article class="management-row"><div><strong>${escaparHtml(produto.nome)}</strong><small>${escaparHtml(produto.categoria)}</small></div><span>${formatarMoeda(produto.preco)}</span><span>${Number(produto.quantidade)} un.</span><span class="${Number(produto.ativo) ? "status-active" : "status-inactive"}">${Number(produto.ativo) ? "Ativo" : "Inativo"}</span><div class="management-actions"><button data-editar="${escaparHtml(produto.id)}" type="button">Editar</button>${Number(produto.ativo) ? `<button class="danger" data-inativar="${escaparHtml(produto.id)}" type="button">Inativar</button>` : ""}</div></article>`,
+        )
+        .join("")
+    : '<p class="empty">Nenhum produto encontrado.</p>';
+};
+
+const renderizarPedidos = () => {
+  if (!listaPedidosAdmin) return;
+  const termo = buscaPedidosAdmin?.value.trim().toLocaleLowerCase("pt-BR") ?? "";
+  const status = filtroStatusPedido?.value ?? "";
+  const pedidos = pedidosAdmin.filter(
+    (pedido) =>
+      (!status || pedido.status === status) &&
+      (!termo || `${pedido.id} ${pedido.cliente}`.toLocaleLowerCase("pt-BR").includes(termo)),
+  );
+  listaPedidosAdmin.innerHTML = pedidos.length
+    ? pedidos
+        .map(
+          (pedido) =>
+            `<article class="management-row"><div><strong>#${escaparHtml(String(pedido.id))}</strong><small>${escaparHtml(pedido.cliente ?? "Cliente")}</small></div><span>${formatarMoeda(pedido.total_final)}</span><span>${escaparHtml(pedido.metodo_pagamento ?? "pix")}</span><select class="status-select" data-pedido="${escaparHtml(pedido.id)}"><option ${pedido.status === "processando" ? "selected" : ""}>processando</option><option ${pedido.status === "enviado" ? "selected" : ""}>enviado</option><option ${pedido.status === "finalizado" ? "selected" : ""}>finalizado</option><option ${pedido.status === "cancelado" ? "selected" : ""}>cancelado</option></select><small>${escaparHtml(pedido.status_pagamento ?? "pendente")}</small></article>`,
+        )
+        .join("")
+    : '<p class="empty">Nenhum pedido encontrado.</p>';
 };
 
 const carregarGerenciamento = async () => {
   try {
-    const [produtosResposta, pedidosResposta] = await Promise.all([fetch("/api/admin/produtos"), fetch("/api/admin/pedidos")]);
-    if (produtosResposta.ok) { produtosAdmin = await produtosResposta.json(); renderizarProdutos(); }
-    if (pedidosResposta.ok && listaPedidosAdmin) {
-      const pedidos = await pedidosResposta.json();
-      listaPedidosAdmin.innerHTML = pedidos.length ? pedidos.map((pedido: Record<string, unknown>) => `<article class="management-row"><div><strong>#${escaparHtml(String(pedido.id).slice(0, 8))}</strong><small>${escaparHtml(pedido.cliente ?? "Cliente")}</small></div><span>${formatarMoeda(pedido.total_final)}</span><span>${escaparHtml(pedido.metodo_pagamento ?? "pix")}</span><select class="status-select" data-pedido="${escaparHtml(pedido.id)}"><option ${pedido.status === "processando" ? "selected" : ""}>processando</option><option ${pedido.status === "enviado" ? "selected" : ""}>enviado</option><option ${pedido.status === "finalizado" ? "selected" : ""}>finalizado</option><option ${pedido.status === "cancelado" ? "selected" : ""}>cancelado</option></select><small>${escaparHtml(pedido.status_pagamento ?? "pendente")}</small></article>`).join("") : '<p class="empty">Nenhum pedido registrado.</p>';
+    const [produtosResposta, pedidosResposta] = await Promise.all([
+      fetch("/api/admin/produtos"),
+      fetch("/api/admin/pedidos"),
+    ]);
+    if (produtosResposta.ok) {
+      produtosAdmin = await produtosResposta.json();
+      renderizarProdutos();
     }
-  } catch { mostrarMensagem("Não foi possível carregar o gerenciamento.", false); }
+    if (pedidosResposta.ok && listaPedidosAdmin) {
+      pedidosAdmin = await pedidosResposta.json();
+      renderizarPedidos();
+    }
+  } catch {
+    mostrarMensagem("Não foi possível carregar o gerenciamento.", false);
+  }
 };
 
 listaProdutosAdmin?.addEventListener("click", (evento) => {
-  const botao = (evento.target as HTMLElement).closest<HTMLButtonElement>("button"); if (!botao) return;
-  const id = botao.dataset.editar ?? botao.dataset.inativar; const produto = produtosAdmin.find((item) => item.id === id); if (!id || !produto) return;
+  const botao = (evento.target as HTMLElement).closest<HTMLButtonElement>("button");
+  if (!botao) return;
+  const id = botao.dataset.editar ?? botao.dataset.inativar;
+  const produto = produtosAdmin.find((item) => item.id === id);
+  if (!id || !produto) return;
   if (botao.dataset.editar) {
     if (produtoIdInput) produtoIdInput.value = id;
-    (document.querySelector<HTMLInputElement>("#nome")!).value = String(produto.nome ?? "");
-    (document.querySelector<HTMLInputElement>("#preco")!).value = String(produto.preco ?? "");
-    (document.querySelector<HTMLInputElement>("#quantidade")!).value = String(produto.quantidade ?? "");
-    (document.querySelector<HTMLSelectElement>("#categoria")!).value = String(produto.categoriaId ?? "");
-    (document.querySelector<HTMLTextAreaElement>("#descricao")!).value = String(produto.descricao ?? "");
-    (document.querySelector<HTMLInputElement>("#imagem")!).value = String(produto.imagem ?? "");
-    if (tituloPagina) tituloPagina.textContent = "Editar produto"; if (botaoSalvar) botaoSalvar.textContent = "Salvar alterações"; atualizarPreview(); window.scrollTo({ top: 0, behavior: "smooth" });
-  } else if (window.confirm(`Inativar ${produto.nome}? O item deixará de aparecer na vitrine, mas o histórico será preservado.`)) {
-    fetch(`/api/produtos/${encodeURIComponent(id)}`, { method: "DELETE" }).then(() => carregarGerenciamento());
+    document.querySelector<HTMLInputElement>("#nome")!.value = String(produto.nome ?? "");
+    document.querySelector<HTMLInputElement>("#preco")!.value = String(produto.preco ?? "");
+    document.querySelector<HTMLInputElement>("#quantidade")!.value = String(produto.quantidade ?? "");
+    document.querySelector<HTMLSelectElement>("#categoria")!.value = String(produto.categoriaId ?? "");
+    document.querySelector<HTMLTextAreaElement>("#descricao")!.value = String(produto.descricao ?? "");
+    document.querySelector<HTMLInputElement>("#imagem")!.value = String(produto.imagem ?? "");
+    if (tituloPagina) tituloPagina.textContent = "Editar produto";
+    if (botaoSalvar) botaoSalvar.textContent = "Salvar alterações";
+    atualizarPreview();
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  } else if (
+    window.confirm(`Inativar ${produto.nome}? O item deixará de aparecer na vitrine, mas o histórico será preservado.`)
+  ) {
+    fetch(`/api/produtos/${encodeURIComponent(id)}`, { method: "DELETE" })
+      .then(async (resposta) => {
+        if (!resposta.ok) throw new Error((await resposta.json()).erro ?? "Não foi possível inativar o produto.");
+        carregarGerenciamento();
+      })
+      .catch((erro) =>
+        mostrarMensagem(erro instanceof Error ? erro.message : "Não foi possível inativar o produto.", false),
+      );
   }
 });
-listaPedidosAdmin?.addEventListener("change", (evento) => { const seletor = evento.target as HTMLSelectElement; const id = seletor.dataset.pedido; if (id) fetch(`/api/admin/pedidos/${encodeURIComponent(id)}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: seletor.value }) }).then(() => carregarGerenciamento()); });
+listaPedidosAdmin?.addEventListener("change", (evento) => {
+  const seletor = evento.target as HTMLSelectElement;
+  const id = seletor.dataset.pedido;
+  if (id)
+    fetch(`/api/admin/pedidos/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: seletor.value }),
+    })
+      .then(async (resposta) => {
+        if (!resposta.ok) throw new Error((await resposta.json()).erro ?? "Não foi possível atualizar o pedido.");
+        carregarGerenciamento();
+      })
+      .catch((erro) =>
+        mostrarMensagem(erro instanceof Error ? erro.message : "Não foi possível atualizar o pedido.", false),
+      );
+});
 buscaProdutosAdmin?.addEventListener("input", renderizarProdutos);
+buscaPedidosAdmin?.addEventListener("input", renderizarPedidos);
+filtroStatusPedido?.addEventListener("change", renderizarPedidos);
 carregarGerenciamento();

@@ -19,6 +19,14 @@ CREATE TABLE IF NOT EXISTS usuarios (
   criado_em DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS tokens_redefinicao_senha (
+  token_hash TEXT PRIMARY KEY,
+  usuario_id TEXT NOT NULL,
+  expira_em DATETIME NOT NULL,
+  criado_em DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (usuario_id) REFERENCES usuarios(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS produtos (
   id TEXT PRIMARY KEY,
   nome TEXT NOT NULL,
@@ -119,11 +127,13 @@ INSERT OR IGNORE INTO categorias (id, nome) VALUES
 INSERT OR IGNORE INTO usuarios (id, nome, email, senha, role) VALUES
   ('usr-admin', 'Administrador', 'admin@lojaficticia.com', 'admin123', 'admin');
 
-INSERT OR IGNORE INTO produtos (id, nome, descricao, preco, quantidade, categoria_id) VALUES
-  ('prod-teclado', 'Teclado Mecânico', 'Teclado gamer com switches azuis', 250.00, 15, 'cat-informatica'),
-  ('prod-mouse', 'Mouse Gamer', 'Mouse com 6 botões e sensor 8000 DPI', 180.00, 25, 'cat-informatica'),
-  ('prod-monitor', 'Monitor 24"', 'Monitor Full HD com painel IPS', 699.90, 10, 'cat-eletronicos'),
-  ('prod-cadeira', 'Cadeira Ergômica', 'Cadeira para escritório com apoio lombar', 899.99, 8, 'cat-moveis');
+INSERT OR IGNORE INTO produtos (id, nome, descricao, preco, quantidade, categoria_id, imagem) VALUES
+  ('prod-teclado', 'Teclado Mecânico RGB Pro', 'Teclado mecânico com switches lineares, iluminação RGB e layout compacto para produtividade e games.', 599.90, 15, 'cat-informatica', 'https://images.unsplash.com/photo-1511467687858-23d96c32e4ae?auto=format&fit=crop&w=900&q=80'),
+  ('prod-mouse', 'Mouse Gamer HyperX Pulsefire', 'Mouse ergonômico com sensor preciso, ajuste de DPI e superfície antiderrapante.', 369.90, 25, 'cat-informatica', 'https://images.unsplash.com/photo-1527814050087-3793815479db?auto=format&fit=crop&w=900&q=80'),
+  ('prod-monitor', 'Monitor Gamer 27'' 165Hz', 'Display Full HD com taxa de atualização de 165 Hz, painel IPS e baixo tempo de resposta.', 1899.00, 10, 'cat-eletronicos', 'https://images.unsplash.com/photo-1527443224154-c4a3942d3acf?auto=format&fit=crop&w=900&q=80'),
+  ('prod-cadeira', 'Cadeira Ergonomia Flex', 'Cadeira de escritório com apoio lombar, ajuste de altura e design moderno para uso diário.', 1499.00, 8, 'cat-moveis', 'https://images.unsplash.com/photo-1505693416388-ac5ce068fe85?auto=format&fit=crop&w=900&q=80'),
+  ('prod-headset', 'Headset Wireless Studio', 'Fones com cancelamento de ruído, bateria de longa duração e som equilibrado para trabalho e lazer.', 899.00, 12, 'cat-eletronicos', 'https://images.unsplash.com/photo-1546435770-a3e426bf472b?auto=format&fit=crop&w=900&q=80'),
+  ('prod-cam', 'Câmera de Segurança 4K', 'Sistema de monitoramento com resolução 4K, visão noturna e armazenamento em nuvem.', 1299.90, 6, 'cat-eletronicos', 'https://images.unsplash.com/photo-1516321165247-4aa89a48be28?auto=format&fit=crop&w=900&q=80');
 
 INSERT OR IGNORE INTO cupons (id, codigo, porcentagem_desconto, tipo_desconto, valor_minimo, ativo) VALUES
   ('cup-boasvindas', 'BEMVINDO10', 10, 'porcentagem', 0, 1),

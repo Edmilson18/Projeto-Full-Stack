@@ -51,9 +51,13 @@ const obterUsuario = (): UsuarioSessao | null => {
   }
 };
 
-const iconeSol = '<svg class="header-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"></path></svg>';
-const iconeLua = '<svg class="header-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>';
-const atualizarIconeTema = (tema: string) => { if (btnTema) btnTema.innerHTML = tema === "claro" ? iconeLua : iconeSol; };
+const iconeSol =
+  '<svg class="header-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"></path></svg>';
+const iconeLua =
+  '<svg class="header-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>';
+const atualizarIconeTema = (tema: string) => {
+  if (btnTema) btnTema.innerHTML = tema === "claro" ? iconeLua : iconeSol;
+};
 const temaInicial = localStorage.getItem("temaLoja") === "escuro" ? "escuro" : "claro";
 document.documentElement.dataset.tema = temaInicial;
 atualizarIconeTema(temaInicial);
@@ -77,31 +81,85 @@ const validarAcessoAdmin = () => {
 const formatarMoeda = (valor: number) =>
   new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(valor);
 
-const textoSeguro = (valor: unknown) => String(valor ?? "").replace(/[&<>"']/g, (caractere) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" })[caractere] ?? caractere);
+const textoSeguro = (valor: unknown) =>
+  String(valor ?? "").replace(
+    /[&<>"']/g,
+    (caractere) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" })[caractere] ?? caractere,
+  );
 
 const renderizarGraficos = (dados: DadosDashboard) => {
   const dias = dados.vendasPorDia ?? [];
   const maiorVenda = Math.max(...dias.map((item) => Number(item.total ?? 0)), 1);
-  if (graficoVendasDia) graficoVendasDia.innerHTML = dias.length ? dias.map((item) => `<div class="bar-column"><span>${formatarMoeda(Number(item.total ?? 0))}</span><i style="height:${Math.max(8, Number(item.total ?? 0) / maiorVenda * 100)}%"></i><small>${textoSeguro(String(item.data ?? "").slice(5))}</small></div>`).join("") : '<p class="empty">Sem dados de vendas.</p>';
+  if (graficoVendasDia)
+    graficoVendasDia.innerHTML = dias.length
+      ? dias
+          .map(
+            (item) =>
+              `<div class="bar-column"><span>${formatarMoeda(Number(item.total ?? 0))}</span><i style="height:${Math.max(8, (Number(item.total ?? 0) / maiorVenda) * 100)}%"></i><small>${textoSeguro(String(item.data ?? "").slice(5))}</small></div>`,
+          )
+          .join("")
+      : '<p class="empty">Sem dados de vendas.</p>';
 
   const categorias = dados.vendasPorCategoria ?? [];
   const maiorCategoria = Math.max(...categorias.map((item) => Number(item.total ?? 0)), 1);
-  if (graficoCategorias) graficoCategorias.innerHTML = categorias.length ? categorias.map((item) => `<div class="metric-line"><div><span>${textoSeguro(item.categoria)}</span><b>${formatarMoeda(Number(item.total ?? 0))}</b></div><i><em style="width:${Number(item.total ?? 0) / maiorCategoria * 100}%"></em></i></div>`).join("") : '<p class="empty">Sem dados por categoria.</p>';
+  if (graficoCategorias)
+    graficoCategorias.innerHTML = categorias.length
+      ? categorias
+          .map(
+            (item) =>
+              `<div class="metric-line"><div><span>${textoSeguro(item.categoria)}</span><b>${formatarMoeda(Number(item.total ?? 0))}</b></div><i><em style="width:${(Number(item.total ?? 0) / maiorCategoria) * 100}%"></em></i></div>`,
+          )
+          .join("")
+      : '<p class="empty">Sem dados por categoria.</p>';
 
   const status = dados.pedidosPorStatus ?? [];
-  if (graficoStatus) graficoStatus.innerHTML = status.length ? status.map((item) => {
-    const nomeStatus = String(item.status ?? "pendente").toLowerCase().replace(/[^a-z0-9-]/g, "-");
-    return `<div class="status-line status-${nomeStatus}"><span class="status-dot"></span><strong>${textoSeguro(item.status)}</strong><b>${Number(item.total ?? 0)}</b></div>`;
-  }).join("") : '<p class="empty">Sem pedidos.</p>';
+  if (graficoStatus)
+    graficoStatus.innerHTML = status.length
+      ? status
+          .map((item) => {
+            const nomeStatus = String(item.status ?? "pendente")
+              .toLowerCase()
+              .replace(/[^a-z0-9-]/g, "-");
+            return `<div class="status-line status-${nomeStatus}"><span class="status-dot"></span><strong>${textoSeguro(item.status)}</strong><b>${Number(item.total ?? 0)}</b></div>`;
+          })
+          .join("")
+      : '<p class="empty">Sem pedidos.</p>';
 
   const estoque = dados.estoqueBaixo ?? [];
-  if (listaEstoqueBaixo) listaEstoqueBaixo.innerHTML = estoque.length ? estoque.map((item) => `<div class="stock-line"><span>${textoSeguro(item.nome)}</span><b>${Number(item.quantidade ?? 0)} un.</b></div>`).join("") : '<p class="empty">Estoque saudável.</p>';
+  if (listaEstoqueBaixo)
+    listaEstoqueBaixo.innerHTML = estoque.length
+      ? estoque
+          .map(
+            (item) =>
+              `<div class="stock-line"><span>${textoSeguro(item.nome)}</span><b>${Number(item.quantidade ?? 0)} un.</b></div>`,
+          )
+          .join("")
+      : '<p class="empty">Estoque saudável.</p>';
 };
 
 const baixarPlanilha = () => {
   if (!dadosAtuais) return;
-  const linhas = [["Indicador", "Valor"], ["Produtos", dadosAtuais.totalProdutos], ["Usuários", dadosAtuais.totalUsuarios], ["Pedidos", dadosAtuais.totalPedidos], ["Vendas", dadosAtuais.totalVendas], [], ["Pedido", "Cliente", "Status", "Valor", "Data"], ...dadosAtuais.vendasRecentes.map((pedido) => [String(pedido.id ?? ""), String(pedido.cliente ?? "Cliente"), String(pedido.status ?? "pendente"), Number(pedido.valor ?? 0).toFixed(2).replace(".", ","), String(pedido.criado_em ?? "")])];
-  const csv = linhas.map((linha) => linha.map((celula) => `"${String(celula).replace(/"/g, '""')}"`).join(";")).join("\n");
+  const linhas = [
+    ["Indicador", "Valor"],
+    ["Produtos", dadosAtuais.totalProdutos],
+    ["Usuários", dadosAtuais.totalUsuarios],
+    ["Pedidos", dadosAtuais.totalPedidos],
+    ["Vendas", dadosAtuais.totalVendas],
+    [],
+    ["Pedido", "Cliente", "Status", "Valor", "Data"],
+    ...dadosAtuais.vendasRecentes.map((pedido) => [
+      String(pedido.id ?? ""),
+      String(pedido.cliente ?? "Cliente"),
+      String(pedido.status ?? "pendente"),
+      Number(pedido.valor ?? 0)
+        .toFixed(2)
+        .replace(".", ","),
+      String(pedido.criado_em ?? ""),
+    ]),
+  ];
+  const csv = linhas
+    .map((linha) => linha.map((celula) => `"${String(celula).replace(/"/g, '""')}"`).join(";"))
+    .join("\n");
   const link = document.createElement("a");
   link.href = URL.createObjectURL(new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8" }));
   link.download = `relatorio-loja-${new Date().toISOString().slice(0, 10)}.csv`;
@@ -113,8 +171,15 @@ const gerarPdf = () => {
   if (!dadosAtuais) return;
   const janela = window.open("", "_blank", "width=900,height=700");
   if (!janela) return;
-  const pedidos = dadosAtuais.vendasRecentes.map((pedido) => `<tr><td>${textoSeguro(String(pedido.id ?? "").slice(0, 8))}</td><td>${textoSeguro(pedido.cliente)}</td><td>${textoSeguro(pedido.status)}</td><td>${formatarMoeda(Number(pedido.valor ?? 0))}</td></tr>`).join("");
-  janela.document.write(`<html><head><title>Relatório Loja Tech</title><style>body{font-family:Arial;color:#17202b;padding:35px}h1{margin-bottom:4px}p{color:#64748b}.grid{display:flex;gap:12px;margin:25px 0}.card{border:1px solid #dbe4f0;padding:16px;flex:1}.card b{display:block;font-size:25px;margin-top:8px}table{width:100%;border-collapse:collapse;margin-top:20px}th,td{text-align:left;padding:12px;border-bottom:1px solid #dbe4f0}th{color:#64748b;font-size:12px;text-transform:uppercase}@media print{button{display:none}}</style></head><body><h1>Loja Tech</h1><p>Relatório gerencial · ${new Date().toLocaleDateString("pt-BR")}</p><div class="grid"><div class="card">Produtos<b>${dadosAtuais.totalProdutos}</b></div><div class="card">Usuários<b>${dadosAtuais.totalUsuarios}</b></div><div class="card">Pedidos<b>${dadosAtuais.totalPedidos}</b></div><div class="card">Vendas<b>${formatarMoeda(dadosAtuais.totalVendas)}</b></div></div><h2>Pedidos recentes</h2><table><tr><th>Pedido</th><th>Cliente</th><th>Status</th><th>Valor</th></tr>${pedidos || '<tr><td colspan="4">Nenhum pedido</td></tr>'}</table><script>window.onload=()=>window.print();</script></body></html>`);
+  const pedidos = dadosAtuais.vendasRecentes
+    .map(
+      (pedido) =>
+        `<tr><td>${textoSeguro(String(pedido.id ?? ""))}</td><td>${textoSeguro(pedido.cliente)}</td><td>${textoSeguro(pedido.status)}</td><td>${formatarMoeda(Number(pedido.valor ?? 0))}</td></tr>`,
+    )
+    .join("");
+  janela.document.write(
+    `<html><head><title>Relatório Loja Tech</title><style>body{font-family:Arial;color:#17202b;padding:35px}h1{margin-bottom:4px}p{color:#64748b}.grid{display:flex;gap:12px;margin:25px 0}.card{border:1px solid #dbe4f0;padding:16px;flex:1}.card b{display:block;font-size:25px;margin-top:8px}table{width:100%;border-collapse:collapse;margin-top:20px}th,td{text-align:left;padding:12px;border-bottom:1px solid #dbe4f0}th{color:#64748b;font-size:12px;text-transform:uppercase}@media print{button{display:none}}</style></head><body><h1>Loja Tech</h1><p>Relatório gerencial · ${new Date().toLocaleDateString("pt-BR")}</p><div class="grid"><div class="card">Produtos<b>${dadosAtuais.totalProdutos}</b></div><div class="card">Usuários<b>${dadosAtuais.totalUsuarios}</b></div><div class="card">Pedidos<b>${dadosAtuais.totalPedidos}</b></div><div class="card">Vendas<b>${formatarMoeda(dadosAtuais.totalVendas)}</b></div></div><h2>Pedidos recentes</h2><table><tr><th>Pedido</th><th>Cliente</th><th>Status</th><th>Valor</th></tr>${pedidos || '<tr><td colspan="4">Nenhum pedido</td></tr>'}</table><script>window.onload=()=>window.print();</script></body></html>`,
+  );
   janela.document.close();
 };
 
@@ -122,8 +187,7 @@ const carregarDashboard = async () => {
   if (!validarAcessoAdmin()) return;
 
   try {
-    const resposta = await fetch("/api/dashboard", {
-    });
+    const resposta = await fetch("/api/dashboard", {});
     const dados = await resposta.json();
 
     if (!resposta.ok) {
@@ -148,12 +212,12 @@ const carregarDashboard = async () => {
               (pedido: Record<string, unknown>) => `
                 <div class="pedido-item">
                   <div>
-                    <strong>${String(pedido.cliente ?? "Cliente" )}</strong>
-                    <small>${String(pedido.status ?? "pendente")}</small>
+                    <strong>#${textoSeguro(String(pedido.id ?? ""))}</strong>
+                    <small>${textoSeguro(String(pedido.cliente ?? "Cliente"))} · ${textoSeguro(String(pedido.status ?? "pendente"))}</small>
                   </div>
                   <span>${formatarMoeda(Number(pedido.valor ?? 0))}</span>
                 </div>
-              `
+              `,
             )
             .join("")
         : '<p class="empty">Nenhum pedido registrado.</p>';
