@@ -126,27 +126,60 @@ Use essas credenciais somente no ambiente local de demonstração. Antes de publ
 
 ## Estrutura do projeto
 
+Monorepo com npm workspaces. As decisões de arquitetura estão em
+[`docs/adr/`](docs/adr/README.md).
+
 ```text
 .
+├── apps/
+│   ├── api/                  API HTTP, regras de dados e testes
+│   │   ├── src/
+│   │   │   ├── server.ts       # Rotas, sessão e arquivos estáticos
+│   │   │   ├── database.ts     # Acesso ao SQLite e transações
+│   │   │   ├── config.ts       # Env, caminhos e porta
+│   │   │   ├── validacao.ts    # Validações do domínio
+│   │   │   └── testes/         # 69 testes de integração e unidade
+│   │   └── vitest.config.ts
+│   └── web/                  Loja em React
+│       ├── src/
+│       │   ├── App.tsx         # Vitrine, carrinho, conta e checkout
+│       │   ├── main.tsx        # Ponto de entrada
+│       │   └── styles.css
+│       └── vite.config.ts
+├── packages/
+│   ├── shared/              Contratos tipados entre api e web
+│   └── config/              tsconfig.base.json compartilhado
+├── legacy/                  admin.ts e dashboard.ts, removidos na Fase 6
 ├── database/
-│   └── schema.sql          # Schema, migrações e dados iniciais
-├── src/
-│   ├── App.tsx             # Loja, autenticação, carrinho e conta
-│   ├── admin.ts            # Gestão de catálogo e pedidos
-│   ├── dashboard.ts        # Métricas e relatórios
-│   ├── database.ts         # Acesso ao SQLite e regras de dados
-│   ├── server.ts           # API HTTP e sessão
-│   ├── validacao.ts        # Validações do domínio
-│   └── validacao.test.ts   # Testes unitários das validações
-├── .oxlintrc.jsonc         # Configuração do linter, com justificativa por regra
-├── .prettierrc.json        # Configuração de formatação
-├── tsconfig.json           # Typecheck e IDE (inclui os testes)
-├── tsconfig.build.json     # Build de produção (exclui os testes)
-├── admin.html              # Painel administrativo
-├── dashboard.html          # Dashboard
+│   └── schema.sql           Schema e dados iniciais
+├── docs/adr/                Decisões de arquitetura
+├── .oxlintrc.jsonc          Linter, com justificativa por regra
+├── .prettierrc.json         Formatação
+├── admin.html               Painel administrativo (legado)
+├── dashboard.html           Dashboard (legado)
 ├── package.json
 └── README.md
 ```
+
+### Comandos
+
+Os scripts rodam da raiz e delegam para o pacote correspondente.
+
+| Comando | Onde executa |
+| --- | --- |
+| `npm run dev` | Sobe api (3000) e web (5173) juntos |
+| `npm run build` | Compila api, web e os painéis legados |
+| `npm test` | Suíte do `@loja/api` |
+| `npm run verify` | typecheck em todos os pacotes, lint e testes |
+| `npm run typecheck -w @loja/web` | Só o typecheck do frontend |
+
+### Gerenciador de pacotes
+
+O `package.json` declara `"packageManager": "pnpm@9.15.0"`, mas a instalação
+atual usa **npm workspaces**, porque o pnpm exige privilégio de administrador
+para ser instalado nesta máquina. A migração é mecânica quando o pnpm estiver
+disponível: trocar `workspaces` por `pnpm-workspace.yaml` e rodar `pnpm install`.
+O motivo está em [`docs/adr/003`](docs/adr/003-monorepo-pnpm-turborepo.md).
 
 ## API
 
@@ -184,14 +217,14 @@ contrato tipado.
 
 | Item | Onde | Quando |
 | --- | --- | --- |
-| 43 `String(objeto)` podem renderizar `[object Object]` | `src/App.tsx` | Fase 3 e 6 |
-| 11 `Promise` sem `await`, sem `catch` e sem `void` | `src/App.tsx` | Fase 6 |
+| 43 `String(objeto)` podem renderizar `[object Object]` | `apps/web/src/App.tsx` | Fase 3 e 6 |
+| 11 `Promise` sem `await`, sem `catch` e sem `void` | `apps/web/src/App.tsx` | Fase 6 |
 | 33 `as` em cima de `unknown` | ambos | Fase 3 |
-| 5 template literals com valor possivelmente `null`/`undefined` | `src/App.tsx` | Fase 6 |
-| `App.tsx` concentra 55 `useState` em um único componente | `src/App.tsx` | Fase 6 |
-| `server.ts` roteia por um encadeamento de `if` | `src/server.ts` | Fase 3 |
+| 5 template literals com valor possivelmente `null`/`undefined` | `apps/web/src/App.tsx` | Fase 6 |
+| `App.tsx` concentra 55 `useState` em um único componente | `apps/web/src/App.tsx` | Fase 6 |
+| `server.ts` roteia por um encadeamento de `if` | `apps/api/src/server.ts` | Fase 3 |
 | Dinheiro armazenado como `REAL` (ponto flutuante) | `database/schema.sql` | Fase 4 |
-| Sem paginação nas listagens | `src/database.ts` | Fase 3 |
+| Sem paginação nas listagens | `apps/api/src/database.ts` | Fase 3 |
 | Busca e filtro de pedidos rodam no cliente | `src/admin.ts` | Fase 6 |
 
 ## Próximos passos

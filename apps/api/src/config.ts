@@ -2,7 +2,11 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { config as carregarEnv } from "dotenv";
 
-const raizProjeto = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+// Três níveis acima: `src/` -> `apps/api/` -> `apps/` -> raiz do repositório.
+// Funciona igual compilado, porque `dist/` fica na mesma profundidade que `src/`.
+// Com apenas um `..` o caminho resolveria para `apps/api`, e o servidor não
+// acharia o `.env` nem o `database/`.
+const raizProjeto = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 
 // O dotenv e carregado aqui, e nao em quem importa, porque o ESM avalia os
 // modulos importados antes do corpo de quem importa. Se ficasse em server.ts,
@@ -19,7 +23,10 @@ export const ambiente = {
   banco: process.env.DATABASE_FILE ? path.resolve(raizProjeto, process.env.DATABASE_FILE) : bancoPadrao,
   /** O schema versionado nunca muda com o ambiente; e a fonte do seed. */
   schema: path.join(raizProjeto, "database", "schema.sql"),
-  dist: path.join(raizProjeto, "dist"),
+  /** Build do frontend, servido pelo Node em producao. */
+  dist: path.join(raizProjeto, "apps", "web", "dist"),
+  /** Painéis antigos, que o `admin.html` e o `dashboard.html` ainda carregam. */
+  buildLegado: path.join(raizProjeto, "build"),
   raiz: raizProjeto,
 };
 

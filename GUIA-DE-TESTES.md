@@ -55,8 +55,8 @@ esperado neste ponto.
 ### 4. Rodar um arquivo só, durante a depuração
 
 ```bash
-npx vitest run src/testes/banco.test.ts
-npx vitest run src/testes/api.test.ts
+npx vitest run apps/api/src/testes/banco.test.ts
+npx vitest run apps/api/src/testes/api.test.ts
 ```
 
 ### 5. Filtrar por nome de teste
@@ -78,9 +78,9 @@ Reexecuta só o arquivo alterado, o que é bem mais rápido que a suíte inteira
 
 ## Parte 2 — O que cada arquivo cobre
 
-### `src/testes/banco.test.ts` — 31 testes
+### `apps/api/src/testes/banco.test.ts` — 31 testes
 
-Chama `src/database.ts` direto, sem HTTP.
+Chama `apps/api/src/database.ts` direto, sem HTTP.
 
 | Bloco | O que verifica |
 | --- | --- |
@@ -97,7 +97,7 @@ O teste mais importante é **`faz rollback quando um item do pedido falha`**. El
 envia dois itens, sendo o segundo inexistente, e confirma que o estoque do
 primeiro **não** foi debitado. É a garantia de que a transação funciona.
 
-### `src/testes/api.test.ts` — 27 testes
+### `apps/api/src/testes/api.test.ts` — 27 testes
 
 Sobe o servidor real em porta efêmera e fala HTTP, com cookie de sessão.
 
@@ -193,7 +193,7 @@ Este é o teste que a suíte não cobre, porque precisa de um ambiente diferente
 # Windows PowerShell
 $env:NODE_ENV="production"
 $env:PORT="3100"
-npx tsx src/server.ts
+npx tsx apps/api/src/server.ts
 ```
 
 Em outra aba:
@@ -216,7 +216,7 @@ gate funciona nos dois sentidos:
 ```bash
 $env:NODE_ENV="development"
 $env:PORT="3101"
-npx tsx src/server.ts
+npx tsx apps/api/src/server.ts
 ```
 
 ```bash

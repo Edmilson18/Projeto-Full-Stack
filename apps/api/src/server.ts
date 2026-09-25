@@ -138,9 +138,14 @@ function parseBody(request: http.IncomingMessage): Promise<Record<string, unknow
 async function servirArquivo(res: http.ServerResponse, url: string) {
   const rota = url === "/" || url === "/login.html" ? "/index.html" : url;
   const usaBuildFrontend = rota === "/index.html" || rota.startsWith("/assets/");
+  // `/build/` continua resolvendo a partir da raiz: e onde `admin.html` e
+  // `dashboard.html` procuram os paineis antigos ate a Fase 6 remove-los.
+  const usaBuildLegado = rota.startsWith("/build/");
   const caminhoArquivo = usaBuildFrontend
     ? path.join(diretorioDist, rota.replace(/^\//, ""))
-    : path.join(raizProjeto, rota.replace(/^\//, ""));
+    : usaBuildLegado
+      ? path.join(ambiente.buildLegado, rota.replace(/^\/build\//, ""))
+      : path.join(raizProjeto, rota.replace(/^\//, ""));
 
   try {
     const conteudo = await lerArquivoLocal(caminhoArquivo);

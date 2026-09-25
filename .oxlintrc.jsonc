@@ -40,10 +40,21 @@
     // As tres regras abaixo ficam em "warn" de proposito na Fase 1.
     // A causa raiz e que a API devolve `Record<string, unknown>`; corrigir na raiz
     // e trabalho da Fase 6 (tipar as respostas) e da Fase 3 (contrato Zod).
-    // Ver src/App.tsx:799 para o caso real de "[object Object]" na tela.
+    // Ver apps/web/src/App.tsx:799 para o caso real de "[object Object]".
     "typescript/no-base-to-string": "warn",
     "typescript/no-floating-promises": "warn",
     "typescript/restrict-template-expressions": "warn",
   },
-  "ignorePatterns": ["build", "dist", "node_modules", "database", "coverage"],
+  "ignorePatterns": [
+    "build",
+    "dist",
+    "coverage",
+    ".cache",
+    ".local",
+    "node_modules",
+    "**/node_modules",
+    "**/dist",
+    "**/coverage",
+    "database",
+  ],
 }

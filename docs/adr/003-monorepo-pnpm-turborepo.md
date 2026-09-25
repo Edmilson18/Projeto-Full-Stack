@@ -1,8 +1,13 @@
 # ADR 003: Monorepo com pnpm workspaces e Turborepo
 
-- **Status:** Proposta
+- **Status:** Aceita com ressalva
 - **Data:** 2026-09-25
 - **Escopo:** Organização do repositório
+- **Ressalva:** a estrutura de 3 pacotes foi implementada, mas com **npm
+  workspaces** em vez de pnpm. O pnpm exige privilégio de administrador para
+  ser instalado, indisponível no ambiente de execução. O `package.json` declara
+  `"packageManager": "pnpm@9.15.0"` para tornar a intenção explícita. Ver
+  "Consequências" para o que ficou como dívida.
 
 ## Contexto
 

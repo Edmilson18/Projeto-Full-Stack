@@ -1,0 +1,26 @@
+{
+  "name": "@loja/api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "start": "node --experimental-sqlite dist/server.js",
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "db:init": "node --experimental-sqlite --import tsx src/database.ts --init"
+  },
+  "dependencies": {
+    "@loja/shared": "*",
+    "dotenv": "^18.0.4"
+  },
+  "devDependencies": {
+    "@types/node": "^26.4.1",
+    "tsx": "^4.23.12",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.2"
+  }
+}
