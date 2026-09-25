@@ -31,7 +31,7 @@ const sessoes = new Map<string, { usuarioId: string; expiraEm: number }>();
 export type SessaoUsuario = { id: string; nome: string; email: string; role: Role };
 
 /** Usuário da requisição atual, ou `undefined` para visitante anônimo. */
-export function usuarioDaRequisicao(req: FastifyRequest): SessaoUsuario | undefined {
+export async function usuarioDaRequisicao(req: FastifyRequest): Promise<SessaoUsuario | undefined> {
   const token = req.cookies[COOKIE_SESSAO];
   if (!token) return undefined;
 
@@ -42,20 +42,20 @@ export function usuarioDaRequisicao(req: FastifyRequest): SessaoUsuario | undefi
     return undefined;
   }
 
-  const usuario = buscarUsuarioPorId(sessao.usuarioId);
+  const usuario = await buscarUsuarioPorId(sessao.usuarioId);
   return usuario ? { id: usuario.id, nome: usuario.nome, email: usuario.email, role: usuario.role as Role } : undefined;
 }
 
 /** Exige sessão. Responde 401 quando não há. */
-export function exigirSessao(req: FastifyRequest): SessaoUsuario {
-  const usuario = usuarioDaRequisicao(req);
+export async function exigirSessao(req: FastifyRequest): Promise<SessaoUsuario> {
+  const usuario = await usuarioDaRequisicao(req);
   if (!usuario) throw ErroApp.naoAutenticado("Faça login para continuar.");
   return usuario;
 }
 
 /** Exige sessão com papel de administrador. Responde 401 ou 403. */
-export function exigirAdmin(req: FastifyRequest): SessaoUsuario {
-  const usuario = exigirSessao(req);
+export async function exigirAdmin(req: FastifyRequest): Promise<SessaoUsuario> {
+  const usuario = await exigirSessao(req);
   if (usuario.role !== "admin") throw ErroApp.semPermissao("Acesso restrito ao administrador.");
   return usuario;
 }
@@ -86,7 +86,7 @@ export async function registrarRotasAuth(app: FastifyInstance) {
   app.post("/api/login", { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } }, async (req, reply) => {
     const { email, senha } = loginBody.parse(req.body);
 
-    const usuario = buscarUsuarioPorEmail(email);
+    const usuario = await buscarUsuarioPorEmail(email);
     // Mesma resposta para e-mail inexistente e senha errada: responder
     // diferente permitiria enumerar quais contas existem.
     if (!usuario || !verificarSenha(senha, usuario.senha)) {
@@ -94,7 +94,7 @@ export async function registrarRotasAuth(app: FastifyInstance) {
     }
 
     // Migra senhas antigas para scrypt no primeiro login bem-sucedido.
-    if (!usuario.senha.startsWith("scrypt$")) atualizarSenhaUsuario(usuario.id, senha);
+    if (!usuario.senha.startsWith("scrypt$")) await atualizarSenhaUsuario(usuario.id, senha);
 
     criarSessao(reply, usuario.id, seguro);
     // O envelope `{ usuario }` é o contrato que o frontend já consome. Trocá-lo
@@ -112,16 +112,16 @@ export async function registrarRotasAuth(app: FastifyInstance) {
     return { mensagem: "Sessão encerrada." };
   });
 
-  app.get("/api/sessao", async (req) => ({ usuario: usuarioDaRequisicao(req) ?? null }));
+  app.get("/api/sessao", async (req) => ({ usuario: (await usuarioDaRequisicao(req)) ?? null }));
 
   app.post("/api/cadastro", async (req, reply) => {
     const { nome, email, senha } = cadastroBody.parse(req.body);
 
-    if (buscarUsuarioPorEmail(email)) throw ErroApp.conflito("Este e-mail já está cadastrado.");
+    if (await buscarUsuarioPorEmail(email)) throw ErroApp.conflito("Este e-mail já está cadastrado.");
 
     const id = randomUUID();
     try {
-      criarUsuario({ id, nome, email, senha });
+      await criarUsuario({ id, nome, email, senha });
     } catch (erro) {
       // A restrição UNIQUE do banco cobre duas tentativas simultâneas, que
       // passam pelo `if` acima sem ver nada.
@@ -141,7 +141,7 @@ export async function registrarRotasAuth(app: FastifyInstance) {
     { config: { rateLimit: { max: 5, timeWindow: "5 minutes" } } },
     async (req, reply) => {
       const { email } = recuperarSenhaBody.parse(req.body);
-      const token = criarTokenRedefinicaoSenha(email);
+      const token = await criarTokenRedefinicaoSenha(email);
 
       // Fora de produção o token volta na resposta, para não precisar de e-mail
       // durante o desenvolvimento. A flag precisa ser explícita: sem
@@ -163,7 +163,7 @@ export async function registrarRotasAuth(app: FastifyInstance) {
   app.post("/api/redefinir-senha", async (req) => {
     const { token, senha } = redefinirSenhaBody.parse(req.body);
 
-    if (!redefinirSenhaComToken(token, senha)) {
+    if (!(await redefinirSenhaComToken(token, senha))) {
       throw ErroApp.badRequest("O link de recuperação é inválido ou expirou.", "token_invalido");
     }
     return { mensagem: "Senha redefinida com sucesso. Faça login com a nova senha." };

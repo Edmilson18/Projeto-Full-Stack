@@ -143,25 +143,34 @@ VITE v8.2.2  ready in 300 ms
 ➜  Local:   http://localhost:5173/
 ```
 
-### 2. Conferir que o banco de teste não foi tocado
+### 2. Conferir que a suite nao tocou no banco de desenvolvimento
 
-O ponto mais importante deste guia. A suíte usa um banco separado:
+O ponto mais importante deste guia. A suite cria um **schema separado** no
+mesmo PostgreSQL e o apaga no final. O `public` e o banco de desenvolvimento.
 
 ```bash
 npm run dev
 ```
 
-Em outra aba:
+Em outra aba, anote os numeros:
 
 ```bash
-Get-ChildItem .cache\teste.db     # Windows
-ls -la .cache/teste.db            # Linux/macOS
+docker exec loja-tech-postgres psql -U loja -d loja -c "SELECT (SELECT COUNT(*) FROM usuarios) AS usuarios, (SELECT COUNT(*) FROM produtos) AS produtos, (SELECT COUNT(*) FROM avaliacoes) AS avaliacoes;"
 ```
 
-Abra `http://localhost:3000/api/produtos` no navegador. Os produtos devem ser os
-de `database/schema.sql`, **não** os que você criou a mano. Se os dados de teste
-aparecerem na loja, a suíte está gravando no banco errado — e isso é um defeito
-grave.
+Rode `npm test` e execute o mesmo comando. O resultado tem que ser **identico**
+antes e depois. Se o numero de usuarios aumentar, a suite esta gravando no
+`public` e e um defeito grave - foi exatamente isso que aconteceu na primeira
+versao desta fase, e so a comparacao dos numeros revelou.
+
+Para confirmar que o isolamento esta ativo:
+
+```bash
+docker exec loja-tech-postgres psql -U loja -d loja -tAc "SELECT COUNT(*) FROM information_schema.schemata WHERE schema_name LIKE 'teste%';"
+```
+
+O resultado tem que ser `0` depois da suite, porque o schema de teste e apagado
+no final.
 
 ### 3. Fluxo de cliente
 

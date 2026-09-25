@@ -64,7 +64,34 @@ Aplicação full-stack de e-commerce desenvolvida como projeto de portfólio. A 
 ### Pré-requisitos
 
 - [Node.js](https://nodejs.org/) 24 ou superior (a versao esta fixada em `.nvmrc`).
+- [Docker](https://docs.docker.com/desktop/) — necessário para o PostgreSQL.
 - npm.
+
+### Subir o banco
+
+O projeto usa PostgreSQL 17, em container:
+
+```bash
+docker compose up -d
+```
+
+### Criar o schema e popular
+
+```bash
+npm run db:setup
+```
+
+Aplica as migrações de `database/migrations/`, cria o administrador e insere
+os dados de demonstração. Rodar de novo não duplica nada.
+
+| Comando | O que faz |
+| --- | --- |
+| `npm run db:setup` | Migra, cria o admin e semeia |
+| `npm run db:migrate` | Só aplica as migrações pendentes |
+| `npm run db:seed` | Só insere os dados de demonstração |
+| `npm run db:reset` | **Apaga o schema inteiro.** Só em desenvolvimento local |
+
+Para recomeçar do zero: `npm run db:reset && npm run db:setup`
 
 ### Comandos
 

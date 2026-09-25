@@ -30,7 +30,7 @@ export async function registrarRotasCatalogo(app: FastifyInstance) {
   app.get("/api/categorias", async () => listarCategorias());
 
   app.get("/api/cupons", async () =>
-    listarCuponsAtivos().map((cupom) => ({
+    (await listarCuponsAtivos()).map((cupom) => ({
       codigo: cupom.codigo,
       tipoDesconto: cupom.tipo_desconto,
       porcentagemDesconto: Number(cupom.porcentagem_desconto ?? 0),
@@ -43,31 +43,34 @@ export async function registrarRotasCatalogo(app: FastifyInstance) {
   // ── Conta ────────────────────────────────────────────────────────────────
 
   app.get("/api/conta", async (req) => {
-    const usuario = exigirSessao(req);
+    const usuario = await exigirSessao(req);
     return {
-      perfil: buscarPerfilUsuario(usuario.id),
-      pedidos: listarPedidosDoUsuario(usuario.id),
-      favoritos: listarFavoritos(usuario.id),
+      perfil: await buscarPerfilUsuario(usuario.id),
+      pedidos: await listarPedidosDoUsuario(usuario.id),
+      favoritos: await listarFavoritos(usuario.id),
     };
   });
 
   app.put("/api/conta/endereco", async (req) => {
-    const usuario = exigirSessao(req);
+    const usuario = await exigirSessao(req);
     // O schema garante a UF com 2 letras, o que a validação manual fazia com
     // `endereco.estado?.length !== 2` e podia estourar em runtime.
     const entrada = enderecoInput.parse(req.body);
 
-    atualizarEnderecoUsuario(usuario.id, Object.fromEntries(CAMPOS_ENDERECO.map((campo) => [campo, entrada[campo]])));
-    return { perfil: buscarPerfilUsuario(usuario.id) };
+    await atualizarEnderecoUsuario(
+      usuario.id,
+      Object.fromEntries(CAMPOS_ENDERECO.map((campo) => [campo, entrada[campo]])),
+    );
+    return { perfil: await buscarPerfilUsuario(usuario.id) };
   });
 
   app.post("/api/favoritos/:id", async (req) => {
-    const usuario = exigirSessao(req);
-    return { favorito: alternarFavorito(usuario.id, (req.params as { id: string }).id) };
+    const usuario = await exigirSessao(req);
+    return { favorito: await alternarFavorito(usuario.id, (req.params as { id: string }).id) };
   });
 
   app.post("/api/avaliacoes/:id", async (req, reply) => {
-    const usuario = exigirSessao(req);
+    const usuario = await exigirSessao(req);
     const { nota, comentario } = req.body as { nota?: unknown; comentario?: unknown };
 
     const notaNumero = Number(nota);
@@ -77,7 +80,7 @@ export async function registrarRotasCatalogo(app: FastifyInstance) {
     const texto = String(comentario ?? "").trim();
     if (texto.length > 600) throw ErroApp.badRequest("O comentário pode ter no máximo 600 caracteres.");
 
-    salvarAvaliacao(usuario.id, (req.params as { id: string }).id, notaNumero, texto);
+    await salvarAvaliacao(usuario.id, (req.params as { id: string }).id, notaNumero, texto);
     reply.code(201);
     return { mensagem: "Avaliação registrada." };
   });
@@ -85,12 +88,12 @@ export async function registrarRotasCatalogo(app: FastifyInstance) {
   // ── Administração ────────────────────────────────────────────────────────
 
   app.get("/api/admin/produtos", async (req) => {
-    exigirAdmin(req);
+    await exigirAdmin(req);
     return listarProdutos(true);
   });
 
   app.post("/api/produtos", async (req, reply) => {
-    exigirAdmin(req);
+    await exigirAdmin(req);
     const entrada = produtoInput.parse(req.body);
 
     const produto = {
@@ -103,13 +106,13 @@ export async function registrarRotasCatalogo(app: FastifyInstance) {
       imagem: entrada.imagem,
     };
 
-    inserirProduto(produto);
+    await inserirProduto(produto);
     reply.code(201);
     return { mensagem: "Produto cadastrado com sucesso.", produto };
   });
 
   app.put("/api/produtos/:id", async (req) => {
-    exigirAdmin(req);
+    await exigirAdmin(req);
     const entrada = produtoInput.parse(req.body);
     const { ativo } = (req.body ?? {}) as { ativo?: unknown };
 
@@ -127,8 +130,8 @@ export async function registrarRotasCatalogo(app: FastifyInstance) {
   });
 
   app.delete("/api/produtos/:id", async (req) => {
-    exigirAdmin(req);
-    inativarProduto((req.params as { id: string }).id);
+    await exigirAdmin(req);
+    await inativarProduto((req.params as { id: string }).id);
     return { mensagem: "Produto inativado." };
   });
 }

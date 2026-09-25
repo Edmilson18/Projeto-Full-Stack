@@ -1,8 +1,11 @@
 # ADR 005: PostgreSQL no Neon em vez de SQLite
 
-- **Status:** Proposta
+- **Status:** Aceita com ressalva
 - **Data:** 2026-09-25
 - **Escopo:** Banco de dados
+- **Ressalva:** o PostgreSQL entrou pelo `docker-compose.yml`, não pelo Neon.
+  O Neon continua como alvo de deploy e exige `DATABASE_SSL=true` e o driver
+  HTTP no lugar do pool TCP. Ver "Consequências".
 
 ## Contexto
 

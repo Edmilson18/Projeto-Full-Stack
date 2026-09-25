@@ -262,7 +262,11 @@ describe("pedidos pela API", () => {
 
   it("devolve o pedido em /api/conta", async () => {
     const cliente = await clienteComum();
-    await cliente.post("/api/pedidos", { itens: [{ produtoId: "prod-mouse", quantidade: 1 }] });
+    const criado = await cliente.post("/api/pedidos", { itens: [{ produtoId: "prod-mouse", quantidade: 1 }] });
+    // Sem esta checagem, uma falha no POST leria como "não tem pedido" e a
+    // causa real ficaria escondida atrás de um sintoma de outro lugar.
+    expect(criado.status).toBe(201);
+
     const conta = await cliente.get("/api/conta");
 
     expect(conta.status).toBe(200);
