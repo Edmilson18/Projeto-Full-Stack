@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
-import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -23,7 +23,9 @@ export function inicializarBanco(): void {
   try {
     migrarEstrutura(db);
     db.exec(schema);
-    db.prepare("UPDATE cupons SET tipo_desconto = 'frete_gratis', porcentagem_desconto = 0 WHERE codigo = 'FRETEGRATIS'").run();
+    db.prepare(
+      "UPDATE cupons SET tipo_desconto = 'frete_gratis', porcentagem_desconto = 0 WHERE codigo = 'FRETEGRATIS'",
+    ).run();
     garantirAdministrador(db);
     console.log("Banco de dados inicializado com sucesso.");
     console.log(`Arquivo do banco: ${caminhoBanco}`);
@@ -36,16 +38,44 @@ function migrarEstrutura(db: DatabaseSync): void {
   const tabelas = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>;
   if (tabelas.some((tabela) => tabela.name === "usuarios")) {
     const colunasUsuarios = db.prepare("PRAGMA table_info(usuarios)").all() as Array<{ name: string }>;
-    if (!colunasUsuarios.some((coluna) => coluna.name === "role")) db.exec("ALTER TABLE usuarios ADD COLUMN role TEXT NOT NULL DEFAULT 'cliente';");
+    if (!colunasUsuarios.some((coluna) => coluna.name === "role"))
+      db.exec("ALTER TABLE usuarios ADD COLUMN role TEXT NOT NULL DEFAULT 'cliente';");
   }
   if (tabelas.some((tabela) => tabela.name === "produtos")) {
     const colunasProdutos = db.prepare("PRAGMA table_info(produtos)").all() as Array<{ name: string }>;
-    if (!colunasProdutos.some((coluna) => coluna.name === "imagem")) db.exec("ALTER TABLE produtos ADD COLUMN imagem TEXT;");
-    if (!colunasProdutos.some((coluna) => coluna.name === "ativo")) db.exec("ALTER TABLE produtos ADD COLUMN ativo INTEGER NOT NULL DEFAULT 1;");
+    if (!colunasProdutos.some((coluna) => coluna.name === "imagem"))
+      db.exec("ALTER TABLE produtos ADD COLUMN imagem TEXT;");
+    if (!colunasProdutos.some((coluna) => coluna.name === "ativo"))
+      db.exec("ALTER TABLE produtos ADD COLUMN ativo INTEGER NOT NULL DEFAULT 1;");
   }
-  adicionarColunas(db, "usuarios", ["cep TEXT", "rua TEXT", "numero TEXT", "complemento TEXT", "bairro TEXT", "cidade TEXT", "estado TEXT"]);
-  adicionarColunas(db, "cupons", ["tipo_desconto TEXT NOT NULL DEFAULT 'porcentagem'", "valor_minimo REAL NOT NULL DEFAULT 0", "inicio_em DATETIME", "fim_em DATETIME", "limite_uso INTEGER", "usos INTEGER NOT NULL DEFAULT 0"]);
-  adicionarColunas(db, "pedidos", ["metodo_pagamento TEXT", "status_pagamento TEXT NOT NULL DEFAULT 'pendente'", "cep_entrega TEXT", "rua_entrega TEXT", "numero_entrega TEXT", "complemento_entrega TEXT", "bairro_entrega TEXT", "cidade_entrega TEXT", "estado_entrega TEXT"]);
+  adicionarColunas(db, "usuarios", [
+    "cep TEXT",
+    "rua TEXT",
+    "numero TEXT",
+    "complemento TEXT",
+    "bairro TEXT",
+    "cidade TEXT",
+    "estado TEXT",
+  ]);
+  adicionarColunas(db, "cupons", [
+    "tipo_desconto TEXT NOT NULL DEFAULT 'porcentagem'",
+    "valor_minimo REAL NOT NULL DEFAULT 0",
+    "inicio_em DATETIME",
+    "fim_em DATETIME",
+    "limite_uso INTEGER",
+    "usos INTEGER NOT NULL DEFAULT 0",
+  ]);
+  adicionarColunas(db, "pedidos", [
+    "metodo_pagamento TEXT",
+    "status_pagamento TEXT NOT NULL DEFAULT 'pendente'",
+    "cep_entrega TEXT",
+    "rua_entrega TEXT",
+    "numero_entrega TEXT",
+    "complemento_entrega TEXT",
+    "bairro_entrega TEXT",
+    "cidade_entrega TEXT",
+    "estado_entrega TEXT",
+  ]);
 }
 
 function adicionarColunas(db: DatabaseSync, tabela: string, definicoes: string[]): void {
@@ -59,10 +89,16 @@ function adicionarColunas(db: DatabaseSync, tabela: string, definicoes: string[]
 }
 
 function garantirAdministrador(db: DatabaseSync): void {
-  const admin = db.prepare("SELECT id, senha FROM usuarios WHERE email = 'admin@lojaficticia.com'").get() as { id: string; senha: string } | undefined;
+  const admin = db.prepare("SELECT id, senha FROM usuarios WHERE email = 'admin@lojaficticia.com'").get() as
+    { id: string; senha: string } | undefined;
   if (!admin) {
-    db.prepare("INSERT INTO usuarios (id, nome, email, senha, role) VALUES (?, ?, ?, ?, ?)")
-      .run("usr-admin", "Administrador", "admin@lojaficticia.com", criarHashSenha("admin123"), "admin");
+    db.prepare("INSERT INTO usuarios (id, nome, email, senha, role) VALUES (?, ?, ?, ?, ?)").run(
+      "usr-admin",
+      "Administrador",
+      "admin@lojaficticia.com",
+      criarHashSenha("admin123"),
+      "admin",
+    );
   } else {
     db.exec("UPDATE usuarios SET role = 'admin' WHERE email = 'admin@lojaficticia.com';");
     if (!admin.senha.startsWith("scrypt$")) {
@@ -75,6 +111,42 @@ function criarHashSenha(senha: string): string {
   const salt = randomBytes(16).toString("hex");
   const hash = scryptSync(senha, salt, 64).toString("hex");
   return `scrypt$${salt}$${hash}`;
+}
+
+function hashToken(token: string): string {
+  return createHash("sha256").update(token).digest("hex");
+}
+
+export function criarTokenRedefinicaoSenha(email: string): string | undefined {
+  const db = conectarBanco();
+  try {
+    const usuario = db.prepare("SELECT id FROM usuarios WHERE email = ? COLLATE NOCASE").get(email.trim()) as
+      { id: string } | undefined;
+    if (!usuario) return undefined;
+    const token = randomBytes(32).toString("hex");
+    db.prepare("DELETE FROM tokens_redefinicao_senha WHERE usuario_id = ?").run(usuario.id);
+    db.prepare(
+      "INSERT INTO tokens_redefinicao_senha (token_hash, usuario_id, expira_em) VALUES (?, ?, datetime('now', '+1 hour'))",
+    ).run(hashToken(token), usuario.id);
+    return token;
+  } finally {
+    db.close();
+  }
+}
+
+export function redefinirSenhaComToken(token: string, novaSenha: string): boolean {
+  const db = conectarBanco();
+  try {
+    const registro = db
+      .prepare("SELECT usuario_id FROM tokens_redefinicao_senha WHERE token_hash = ? AND expira_em > CURRENT_TIMESTAMP")
+      .get(hashToken(token)) as { usuario_id: string } | undefined;
+    if (!registro) return false;
+    db.prepare("UPDATE usuarios SET senha = ? WHERE id = ?").run(criarHashSenha(novaSenha), registro.usuario_id);
+    db.prepare("DELETE FROM tokens_redefinicao_senha WHERE token_hash = ?").run(hashToken(token));
+    return true;
+  } finally {
+    db.close();
+  }
 }
 
 export function verificarSenha(senha: string, senhaArmazenada: string): boolean {
@@ -91,13 +163,15 @@ export function listarProdutos(incluirInativos = false) {
   const db = conectarBanco();
 
   try {
-    return db.prepare(
-      `SELECT p.id, p.nome, p.descricao, p.preco, p.quantidade, p.imagem, p.ativo, p.categoria_id as categoriaId, c.nome as categoria
+    return db
+      .prepare(
+        `SELECT p.id, p.nome, p.descricao, p.preco, p.quantidade, p.imagem, p.ativo, p.categoria_id as categoriaId, c.nome as categoria
        FROM produtos p
        INNER JOIN categorias c ON c.id = p.categoria_id
        ${incluirInativos ? "" : "WHERE p.ativo = 1"}
-       ORDER BY p.nome ASC`
-    ).all() as Array<Record<string, unknown>>;
+       ORDER BY p.nome ASC`,
+      )
+      .all() as Array<Record<string, unknown>>;
   } finally {
     db.close();
   }
@@ -113,13 +187,84 @@ export function listarCategorias() {
   }
 }
 
+export function validarCupomCodigo(codigo: string) {
+  const db = conectarBanco();
+
+  try {
+    const cupom = db
+      .prepare(
+        `SELECT codigo, porcentagem_desconto, tipo_desconto, valor_minimo, limite_uso, usos, ativo
+       FROM cupons
+       WHERE codigo = ? COLLATE NOCASE AND ativo = 1
+         AND (inicio_em IS NULL OR inicio_em <= CURRENT_TIMESTAMP)
+         AND (fim_em IS NULL OR fim_em >= CURRENT_TIMESTAMP)`,
+      )
+      .get(codigo.trim().toUpperCase()) as
+      | {
+          codigo: string;
+          porcentagem_desconto: number;
+          tipo_desconto: string;
+          valor_minimo: number;
+          limite_uso: number | null;
+          usos: number;
+          ativo: number;
+        }
+      | undefined;
+
+    if (!cupom) {
+      return { valido: false, erro: "Cupom inválido ou expirado." };
+    }
+
+    if (cupom.limite_uso !== null && cupom.usos >= cupom.limite_uso) {
+      return { valido: false, erro: "Este cupom atingiu o limite de uso." };
+    }
+
+    return {
+      valido: true,
+      codigo: cupom.codigo,
+      tipoDesconto: cupom.tipo_desconto,
+      porcentagemDesconto: Number(cupom.porcentagem_desconto ?? 0),
+      valorMinimo: Number(cupom.valor_minimo ?? 0),
+    };
+  } finally {
+    db.close();
+  }
+}
+
+export function listarCuponsAtivos() {
+  const db = conectarBanco();
+
+  try {
+    return db
+      .prepare(
+        `SELECT codigo, tipo_desconto, porcentagem_desconto, valor_minimo, ativo
+       FROM cupons
+       WHERE ativo = 1
+         AND (inicio_em IS NULL OR inicio_em <= CURRENT_TIMESTAMP)
+         AND (fim_em IS NULL OR fim_em >= CURRENT_TIMESTAMP)
+       ORDER BY codigo ASC`,
+      )
+      .all() as Array<{
+      codigo: string;
+      tipo_desconto: string;
+      porcentagem_desconto: number;
+      valor_minimo: number;
+      ativo: number;
+    }>;
+  } finally {
+    db.close();
+  }
+}
+
 export function buscarUsuarioPorEmail(email: string) {
   const db = conectarBanco();
 
   try {
-    return db.prepare(`SELECT id, nome, email, senha, role FROM usuarios WHERE email = ?`).get(email) as
-      | { id: string; nome: string; email: string; senha: string; role: string } 
-      | undefined;
+    // COLLATE NOCASE garante que Email@Exemplo.com e email@exemplo.com
+    // representem a mesma conta, inclusive em bancos antigos.
+    return db
+      .prepare(`SELECT id, nome, email, senha, role FROM usuarios WHERE email = ? COLLATE NOCASE`)
+      .get(email.trim()) as { id: string; nome: string; email: string; senha: string; role: string } | undefined;
   } finally {
     db.close();
   }
@@ -130,8 +275,7 @@ export function buscarUsuarioPorId(id: string) {
 
   try {
     return db.prepare(`SELECT id, nome, email, role FROM usuarios WHERE id = ?`).get(id) as
-      | { id: string; nome: string; email: string; role: string }
-      | undefined;
+      { id: string; nome: string; email: string; role: string } | undefined;
   } finally {
     db.close();
   }
@@ -143,7 +287,7 @@ export function criarUsuario(usuario: { id: string; nome: string; email: string;
   try {
     db.prepare(
       `INSERT INTO usuarios (id, nome, email, senha, role)
-       VALUES (@id, @nome, @email, @senha, 'cliente')`
+       VALUES (@id, @nome, @email, @senha, 'cliente')`,
     ).run({ ...usuario, senha: criarHashSenha(usuario.senha) });
   } finally {
     db.close();
@@ -153,11 +297,17 @@ export function criarUsuario(usuario: { id: string; nome: string; email: string;
 export function listarMaisVendidos() {
   const db = conectarBanco();
   try {
-    return db.prepare(`SELECT p.id, p.nome, p.descricao, p.preco, p.quantidade, p.imagem, p.ativo, c.nome as categoria, COALESCE(SUM(i.quantidade), 0) as vendidos
+    return db
+      .prepare(
+        `SELECT p.id, p.nome, p.descricao, p.preco, p.quantidade, p.imagem, p.ativo, c.nome as categoria, COALESCE(SUM(i.quantidade), 0) as vendidos
       FROM produtos p LEFT JOIN itens_pedido i ON i.produto_id = p.id
       INNER JOIN categorias c ON c.id = p.categoria_id
-      WHERE p.ativo = 1 GROUP BY p.id ORDER BY vendidos DESC, p.nome ASC LIMIT 3`).all() as Array<Record<string, unknown>>;
-  } finally { db.close(); }
+      WHERE p.ativo = 1 GROUP BY p.id ORDER BY vendidos DESC, p.nome ASC LIMIT 3`,
+      )
+      .all() as Array<Record<string, unknown>>;
+  } finally {
+    db.close();
+  }
 }
 
 export function atualizarSenhaUsuario(id: string, senha: string) {
@@ -173,18 +323,22 @@ export function listarPedidosDoUsuario(usuarioId: string) {
   const db = conectarBanco();
 
   try {
-    const pedidos = db.prepare(
-      `SELECT id, subtotal, desconto, frete, total_final, status, metodo_pagamento, status_pagamento, criado_em
-       FROM pedidos WHERE usuario_id = ? ORDER BY criado_em DESC`
-    ).all(usuarioId) as Array<Record<string, unknown>>;
+    const pedidos = db
+      .prepare(
+        `SELECT id, subtotal, desconto, frete, total_final, status, metodo_pagamento, status_pagamento, criado_em
+       FROM pedidos WHERE usuario_id = ? ORDER BY criado_em DESC`,
+      )
+      .all(usuarioId) as Array<Record<string, unknown>>;
 
     return pedidos.map((pedido) => ({
       ...pedido,
-      itens: db.prepare(
-        `SELECT i.produto_id, i.quantidade, i.preco_unitario, i.subtotal, p.nome, p.imagem
+      itens: db
+        .prepare(
+          `SELECT i.produto_id, i.quantidade, i.preco_unitario, i.subtotal, p.nome, p.imagem
          FROM itens_pedido i INNER JOIN produtos p ON p.id = i.produto_id
-         WHERE i.pedido_id = ?`
-      ).all(String(pedido.id)),
+         WHERE i.pedido_id = ?`,
+        )
+        .all(String(pedido.id)),
     }));
   } finally {
     db.close();
@@ -194,58 +348,105 @@ export function listarPedidosDoUsuario(usuarioId: string) {
 export function atualizarEnderecoUsuario(id: string, endereco: Record<string, string>) {
   const db = conectarBanco();
   try {
-    db.prepare(`UPDATE usuarios SET cep=@cep, rua=@rua, numero=@numero, complemento=@complemento, bairro=@bairro, cidade=@cidade, estado=@estado WHERE id=@id`).run({ id, ...endereco });
-  } finally { db.close(); }
+    db.prepare(
+      `UPDATE usuarios SET cep=@cep, rua=@rua, numero=@numero, complemento=@complemento, bairro=@bairro, cidade=@cidade, estado=@estado WHERE id=@id`,
+    ).run({ id, ...endereco });
+  } finally {
+    db.close();
+  }
 }
 
 export function buscarPerfilUsuario(id: string) {
   const db = conectarBanco();
-  try { return db.prepare(`SELECT id, nome, email, role, cep, rua, numero, complemento, bairro, cidade, estado FROM usuarios WHERE id = ?`).get(id) as Record<string, unknown> | undefined; }
-  finally { db.close(); }
+  try {
+    return db
+      .prepare(
+        `SELECT id, nome, email, role, cep, rua, numero, complemento, bairro, cidade, estado FROM usuarios WHERE id = ?`,
+      )
+      .get(id) as Record<string, unknown> | undefined;
+  } finally {
+    db.close();
+  }
 }
 
-export function criarPedido(usuarioId: string, itens: Array<{ produtoId: string; quantidade: number }>, codigoCupom?: string, pagamento?: string) {
+export function criarPedido(
+  usuarioId: string,
+  itens: Array<{ produtoId: string; quantidade: number }>,
+  codigoCupom?: string,
+  pagamento?: string,
+) {
   if (!itens.length) throw new Error("O carrinho está vazio.");
 
   const db = conectarBanco();
-  const pedidoId = crypto.randomUUID();
+  // Código curto e legível para atendimento e para o cliente acompanhar o pedido.
+  const pedidoId = `PED-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}-${randomUUID().slice(0, 6).toUpperCase()}`;
 
   try {
     db.exec("BEGIN TRANSACTION");
     let subtotal = 0;
-    const itensCalculados: Array<{ id: string; produtoId: string; quantidade: number; preco: number; subtotal: number }> = [];
+    const itensCalculados: Array<{
+      id: string;
+      produtoId: string;
+      quantidade: number;
+      preco: number;
+      subtotal: number;
+    }> = [];
 
     for (const item of itens) {
       const produto = db.prepare("SELECT id, preco, quantidade FROM produtos WHERE id = ?").get(item.produtoId) as
-        | { id: string; preco: number; quantidade: number }
-        | undefined;
-      if (!produto || !Number.isInteger(item.quantidade) || item.quantidade < 1) throw new Error("Produto ou quantidade inválida.");
+        { id: string; preco: number; quantidade: number } | undefined;
+      if (!produto || !Number.isInteger(item.quantidade) || item.quantidade < 1)
+        throw new Error("Produto ou quantidade inválida.");
       if (produto.quantidade < item.quantidade) throw new Error("Um dos produtos não tem estoque suficiente.");
 
       const itemSubtotal = produto.preco * item.quantidade;
       subtotal += itemSubtotal;
-      itensCalculados.push({ id: crypto.randomUUID(), produtoId: produto.id, quantidade: item.quantidade, preco: produto.preco, subtotal: itemSubtotal });
+      itensCalculados.push({
+        id: randomUUID(),
+        produtoId: produto.id,
+        quantidade: item.quantidade,
+        preco: produto.preco,
+        subtotal: itemSubtotal,
+      });
       db.prepare("UPDATE produtos SET quantidade = quantidade - ? WHERE id = ?").run(item.quantidade, produto.id);
     }
 
     const cupom = codigoCupom
-      ? db.prepare("SELECT id, porcentagem_desconto, tipo_desconto, valor_minimo, limite_uso, usos FROM cupons WHERE codigo = ? AND ativo = 1 AND (inicio_em IS NULL OR inicio_em <= CURRENT_TIMESTAMP) AND (fim_em IS NULL OR fim_em >= CURRENT_TIMESTAMP)").get(codigoCupom.trim().toUpperCase()) as { id: string; porcentagem_desconto: number; tipo_desconto: string; valor_minimo: number; limite_uso: number | null; usos: number } | undefined
+      ? (db
+          .prepare(
+            "SELECT id, porcentagem_desconto, tipo_desconto, valor_minimo, limite_uso, usos FROM cupons WHERE codigo = ? AND ativo = 1 AND (inicio_em IS NULL OR inicio_em <= CURRENT_TIMESTAMP) AND (fim_em IS NULL OR fim_em >= CURRENT_TIMESTAMP)",
+          )
+          .get(codigoCupom.trim().toUpperCase()) as
+          | {
+              id: string;
+              porcentagem_desconto: number;
+              tipo_desconto: string;
+              valor_minimo: number;
+              limite_uso: number | null;
+              usos: number;
+            }
+          | undefined)
       : undefined;
     if (codigoCupom && !cupom) throw new Error("Cupom inválido ou inativo.");
-    if (cupom && subtotal < Number(cupom.valor_minimo)) throw new Error("O valor mínimo para este cupom não foi atingido.");
-    if (cupom?.limite_uso !== null && cupom && cupom.usos >= cupom.limite_uso) throw new Error("Este cupom atingiu o limite de uso.");
-    const desconto = cupom?.tipo_desconto === "valor_fixo" ? Math.min(subtotal, Number(cupom.porcentagem_desconto)) : subtotal * (Number(cupom?.porcentagem_desconto ?? 0) / 100);
+    if (cupom && subtotal < Number(cupom.valor_minimo))
+      throw new Error("O valor mínimo para este cupom não foi atingido.");
+    if (cupom?.limite_uso !== null && cupom && cupom.usos >= cupom.limite_uso)
+      throw new Error("Este cupom atingiu o limite de uso.");
+    const desconto =
+      cupom?.tipo_desconto === "valor_fixo"
+        ? Math.min(subtotal, Number(cupom.porcentagem_desconto))
+        : subtotal * (Number(cupom?.porcentagem_desconto ?? 0) / 100);
     const frete = cupom?.tipo_desconto === "frete_gratis" || subtotal - desconto >= 150 ? 0 : 20;
     const totalFinal = subtotal - desconto + frete;
 
     db.prepare(
       `INSERT INTO pedidos (id, usuario_id, subtotal, desconto, frete, total_final, status, metodo_pagamento, status_pagamento, cep_entrega, rua_entrega, numero_entrega, complemento_entrega, bairro_entrega, cidade_entrega, estado_entrega)
-       SELECT ?, ?, ?, ?, ?, ?, 'processando', ?, 'aprovado', cep, rua, numero, complemento, bairro, cidade, estado FROM usuarios WHERE id = ?`
+       SELECT ?, ?, ?, ?, ?, ?, 'processando', ?, 'aprovado', cep, rua, numero, complemento, bairro, cidade, estado FROM usuarios WHERE id = ?`,
     ).run(pedidoId, usuarioId, subtotal, desconto, frete, totalFinal, pagamento ?? "pix", usuarioId);
 
     const inserirItem = db.prepare(
       `INSERT INTO itens_pedido (id, pedido_id, produto_id, quantidade, preco_unitario, subtotal)
-       VALUES (?, ?, ?, ?, ?, ?)`
+       VALUES (?, ?, ?, ?, ?, ?)`,
     );
     for (const item of itensCalculados) {
       inserirItem.run(item.id, pedidoId, item.produtoId, item.quantidade, item.preco, item.subtotal);
@@ -253,7 +454,16 @@ export function criarPedido(usuarioId: string, itens: Array<{ produtoId: string;
     if (cupom) db.prepare("UPDATE cupons SET usos = usos + 1 WHERE id = ?").run(cupom.id);
 
     db.exec("COMMIT");
-    return { id: pedidoId, subtotal, desconto, frete, total_final: totalFinal, status: "processando", metodo_pagamento: pagamento ?? "pix", status_pagamento: "aprovado" };
+    return {
+      id: pedidoId,
+      subtotal,
+      desconto,
+      frete,
+      total_final: totalFinal,
+      status: "processando",
+      metodo_pagamento: pagamento ?? "pix",
+      status_pagamento: "aprovado",
+    };
   } catch (erro) {
     db.exec("ROLLBACK");
     throw erro;
@@ -269,34 +479,50 @@ export function listarDashboard() {
     const totalProdutos = db.prepare(`SELECT COUNT(*) as total FROM produtos`).get() as { total: number };
     const totalUsuarios = db.prepare(`SELECT COUNT(*) as total FROM usuarios`).get() as { total: number };
     const totalPedidos = db.prepare(`SELECT COUNT(*) as total FROM pedidos`).get() as { total: number };
-    const totalVendas = db.prepare(`SELECT COALESCE(SUM(total_final), 0) as total FROM pedidos WHERE status != 'cancelado'`).get() as { total: number };
-    const vendasRecentes = db.prepare(
-      `SELECT p.id, u.nome as cliente, p.total_final as valor, p.status, p.criado_em
+    const totalVendas = db
+      .prepare(`SELECT COALESCE(SUM(total_final), 0) as total FROM pedidos WHERE status != 'cancelado'`)
+      .get() as { total: number };
+    const vendasRecentes = db
+      .prepare(
+        `SELECT p.id, u.nome as cliente, p.total_final as valor, p.status, p.criado_em
        FROM pedidos p
        LEFT JOIN usuarios u ON u.id = p.usuario_id
        ORDER BY p.criado_em DESC
-       LIMIT 5`
-    ).all() as Array<Record<string, unknown>>;
-    const vendasPorCategoria = db.prepare(
-      `SELECT c.nome as categoria, COALESCE(SUM(i.subtotal), 0) as total
+       LIMIT 5`,
+      )
+      .all() as Array<Record<string, unknown>>;
+    const vendasPorCategoria = db
+      .prepare(
+        `SELECT c.nome as categoria, COALESCE(SUM(i.subtotal), 0) as total
        FROM itens_pedido i
        INNER JOIN produtos pr ON pr.id = i.produto_id
        INNER JOIN categorias c ON c.id = pr.categoria_id
-       GROUP BY c.id, c.nome ORDER BY total DESC`
-    ).all() as Array<Record<string, unknown>>;
-    const vendasPorDia = db.prepare(
-      `SELECT substr(criado_em, 1, 10) as data, COALESCE(SUM(total_final), 0) as total
-       FROM pedidos WHERE status != 'cancelado' GROUP BY data ORDER BY data DESC LIMIT 14`
-    ).all() as Array<Record<string, unknown>>;
-    const estoqueBaixo = db.prepare(
-      `SELECT id, nome, quantidade FROM produtos WHERE quantidade <= 5 ORDER BY quantidade ASC, nome ASC LIMIT 6`
-    ).all() as Array<Record<string, unknown>>;
-    const pedidosPorStatus = db.prepare(
-      `SELECT status, COUNT(*) as total FROM pedidos GROUP BY status ORDER BY total DESC`
-    ).all() as Array<Record<string, unknown>>;
+       GROUP BY c.id, c.nome ORDER BY total DESC`,
+      )
+      .all() as Array<Record<string, unknown>>;
+    const vendasPorDia = db
+      .prepare(
+        `SELECT substr(criado_em, 1, 10) as data, COALESCE(SUM(total_final), 0) as total
+       FROM pedidos WHERE status != 'cancelado' GROUP BY data ORDER BY data DESC LIMIT 14`,
+      )
+      .all() as Array<Record<string, unknown>>;
+    const estoqueBaixo = db
+      .prepare(
+        `SELECT id, nome, quantidade FROM produtos WHERE quantidade <= 5 ORDER BY quantidade ASC, nome ASC LIMIT 6`,
+      )
+      .all() as Array<Record<string, unknown>>;
+    const pedidosPorStatus = db
+      .prepare(`SELECT status, COUNT(*) as total FROM pedidos GROUP BY status ORDER BY total DESC`)
+      .all() as Array<Record<string, unknown>>;
 
-    const ticketMedio = db.prepare(`SELECT COALESCE(AVG(total_final), 0) as total FROM pedidos WHERE status != 'cancelado'`).get() as { total: number };
-    const produtosVendidos = db.prepare(`SELECT COALESCE(SUM(i.quantidade), 0) as total FROM itens_pedido i INNER JOIN pedidos p ON p.id=i.pedido_id WHERE p.status != 'cancelado'`).get() as { total: number };
+    const ticketMedio = db
+      .prepare(`SELECT COALESCE(AVG(total_final), 0) as total FROM pedidos WHERE status != 'cancelado'`)
+      .get() as { total: number };
+    const produtosVendidos = db
+      .prepare(
+        `SELECT COALESCE(SUM(i.quantidade), 0) as total FROM itens_pedido i INNER JOIN pedidos p ON p.id=i.pedido_id WHERE p.status != 'cancelado'`,
+      )
+      .get() as { total: number };
     return {
       totalProdutos: Number(totalProdutos.total ?? 0),
       totalUsuarios: Number(totalUsuarios.total ?? 0),
@@ -317,16 +543,26 @@ export function listarDashboard() {
 
 export function listarPedidosAdmin() {
   const db = conectarBanco();
-  try { return db.prepare(`SELECT p.id, p.total_final, p.status, p.status_pagamento, p.metodo_pagamento, p.criado_em, u.nome as cliente FROM pedidos p LEFT JOIN usuarios u ON u.id=p.usuario_id ORDER BY p.criado_em DESC`).all() as Array<Record<string, unknown>>; }
-  finally { db.close(); }
+  try {
+    return db
+      .prepare(
+        `SELECT p.id, p.total_final, p.status, p.status_pagamento, p.metodo_pagamento, p.criado_em, u.nome as cliente FROM pedidos p LEFT JOIN usuarios u ON u.id=p.usuario_id ORDER BY p.criado_em DESC`,
+      )
+      .all() as Array<Record<string, unknown>>;
+  } finally {
+    db.close();
+  }
 }
 
 export function atualizarStatusPedido(id: string, status: string) {
   const permitidos = ["processando", "enviado", "finalizado", "cancelado"];
   if (!permitidos.includes(status)) throw new Error("Status de pedido inválido.");
   const db = conectarBanco();
-  try { db.prepare("UPDATE pedidos SET status = ? WHERE id = ?").run(status, id); }
-  finally { db.close(); }
+  try {
+    db.prepare("UPDATE pedidos SET status = ? WHERE id = ?").run(status, id);
+  } finally {
+    db.close();
+  }
 }
 
 export function inserirProduto(produto: {
@@ -343,7 +579,7 @@ export function inserirProduto(produto: {
   try {
     db.prepare(
       `INSERT INTO produtos (id, nome, descricao, preco, quantidade, categoria_id, imagem)
-       VALUES (@id, @nome, @descricao, @preco, @quantidade, @categoria_id, @imagem)`
+       VALUES (@id, @nome, @descricao, @preco, @quantidade, @categoria_id, @imagem)`,
     ).run({
       id: produto.id,
       nome: produto.nome,
@@ -358,34 +594,98 @@ export function inserirProduto(produto: {
   }
 }
 
-export function atualizarProduto(id: string, produto: { nome: string; descricao?: string; preco: number; quantidade: number; categoria_id: string; imagem?: string; ativo?: boolean }) {
+export function atualizarProduto(
+  id: string,
+  produto: {
+    nome: string;
+    descricao?: string;
+    preco: number;
+    quantidade: number;
+    categoria_id: string;
+    imagem?: string;
+    ativo?: boolean;
+  },
+) {
   const db = conectarBanco();
   try {
-    const anterior = db.prepare("SELECT quantidade FROM produtos WHERE id = ?").get(id) as { quantidade: number } | undefined;
+    const anterior = db.prepare("SELECT quantidade FROM produtos WHERE id = ?").get(id) as
+      { quantidade: number } | undefined;
     if (!anterior) throw new Error("Produto não encontrado.");
-    db.prepare(`UPDATE produtos SET nome=@nome, descricao=@descricao, preco=@preco, quantidade=@quantidade, categoria_id=@categoria_id, imagem=@imagem, ativo=@ativo WHERE id=@id`).run({ id, ...produto, descricao: produto.descricao ?? null, imagem: produto.imagem ?? null, ativo: produto.ativo === false ? 0 : 1 });
+    db.prepare(
+      `UPDATE produtos SET nome=@nome, descricao=@descricao, preco=@preco, quantidade=@quantidade, categoria_id=@categoria_id, imagem=@imagem, ativo=@ativo WHERE id=@id`,
+    ).run({
+      id,
+      ...produto,
+      descricao: produto.descricao ?? null,
+      imagem: produto.imagem ?? null,
+      ativo: produto.ativo === false ? 0 : 1,
+    });
     const diferenca = produto.quantidade - anterior.quantidade;
-    if (diferenca) db.prepare("INSERT INTO movimentacoes_estoque (id, produto_id, tipo, quantidade, motivo) VALUES (?, ?, ?, ?, ?)").run(crypto.randomUUID(), id, diferenca > 0 ? "entrada" : "ajuste", diferenca, "Ajuste administrativo");
-  } finally { db.close(); }
+    if (diferenca)
+      db.prepare(
+        "INSERT INTO movimentacoes_estoque (id, produto_id, tipo, quantidade, motivo) VALUES (?, ?, ?, ?, ?)",
+      ).run(randomUUID(), id, diferenca > 0 ? "entrada" : "ajuste", diferenca, "Ajuste administrativo");
+  } finally {
+    db.close();
+  }
 }
 
 export function inativarProduto(id: string) {
   const db = conectarBanco();
-  try { db.prepare("UPDATE produtos SET ativo = 0 WHERE id = ?").run(id); } finally { db.close(); }
+  try {
+    db.prepare("UPDATE produtos SET ativo = 0 WHERE id = ?").run(id);
+  } finally {
+    db.close();
+  }
 }
 
 export function listarFavoritos(usuarioId: string) {
   const db = conectarBanco();
-  try { return db.prepare(`SELECT p.id, p.nome, p.descricao, p.preco, p.quantidade, p.imagem, c.nome categoria FROM favoritos f INNER JOIN produtos p ON p.id=f.produto_id INNER JOIN categorias c ON c.id=p.categoria_id WHERE f.usuario_id=? AND p.ativo=1 ORDER BY f.criado_em DESC`).all(usuarioId) as Array<Record<string, unknown>>; } finally { db.close(); }
+  try {
+    return db
+      .prepare(
+        `SELECT p.id, p.nome, p.descricao, p.preco, p.quantidade, p.imagem, c.nome categoria FROM favoritos f INNER JOIN produtos p ON p.id=f.produto_id INNER JOIN categorias c ON c.id=p.categoria_id WHERE f.usuario_id=? AND p.ativo=1 ORDER BY f.criado_em DESC`,
+      )
+      .all(usuarioId) as Array<Record<string, unknown>>;
+  } finally {
+    db.close();
+  }
 }
 
 export function alternarFavorito(usuarioId: string, produtoId: string) {
   const db = conectarBanco();
-  try { const existe = db.prepare("SELECT 1 FROM favoritos WHERE usuario_id=? AND produto_id=?").get(usuarioId, produtoId); if (existe) db.prepare("DELETE FROM favoritos WHERE usuario_id=? AND produto_id=?").run(usuarioId, produtoId); else db.prepare("INSERT INTO favoritos (usuario_id, produto_id) VALUES (?, ?)").run(usuarioId, produtoId); return !existe; } finally { db.close(); }
+  try {
+    const existe = db.prepare("SELECT 1 FROM favoritos WHERE usuario_id=? AND produto_id=?").get(usuarioId, produtoId);
+    if (existe) db.prepare("DELETE FROM favoritos WHERE usuario_id=? AND produto_id=?").run(usuarioId, produtoId);
+    else db.prepare("INSERT INTO favoritos (usuario_id, produto_id) VALUES (?, ?)").run(usuarioId, produtoId);
+    return !existe;
+  } finally {
+    db.close();
+  }
 }
 
-export function listarAvaliacoes(produtoId: string) { const db = conectarBanco(); try { return db.prepare(`SELECT a.nota, a.comentario, a.criado_em, u.nome FROM avaliacoes a INNER JOIN usuarios u ON u.id=a.usuario_id WHERE a.produto_id=? ORDER BY a.criado_em DESC`).all(produtoId) as Array<Record<string, unknown>>; } finally { db.close(); } }
-export function salvarAvaliacao(usuarioId: string, produtoId: string, nota: number, comentario: string) { const db = conectarBanco(); try { db.prepare(`INSERT INTO avaliacoes (id, usuario_id, produto_id, nota, comentario) VALUES (?, ?, ?, ?, ?) ON CONFLICT(usuario_id, produto_id) DO UPDATE SET nota=excluded.nota, comentario=excluded.comentario, criado_em=CURRENT_TIMESTAMP`).run(crypto.randomUUID(), usuarioId, produtoId, nota, comentario); } finally { db.close(); } }
+export function listarAvaliacoes(produtoId: string) {
+  const db = conectarBanco();
+  try {
+    return db
+      .prepare(
+        `SELECT a.nota, a.comentario, a.criado_em, u.nome FROM avaliacoes a INNER JOIN usuarios u ON u.id=a.usuario_id WHERE a.produto_id=? ORDER BY a.criado_em DESC`,
+      )
+      .all(produtoId) as Array<Record<string, unknown>>;
+  } finally {
+    db.close();
+  }
+}
+export function salvarAvaliacao(usuarioId: string, produtoId: string, nota: number, comentario: string) {
+  const db = conectarBanco();
+  try {
+    db.prepare(
+      `INSERT INTO avaliacoes (id, usuario_id, produto_id, nota, comentario) VALUES (?, ?, ?, ?, ?) ON CONFLICT(usuario_id, produto_id) DO UPDATE SET nota=excluded.nota, comentario=excluded.comentario, criado_em=CURRENT_TIMESTAMP`,
+    ).run(randomUUID(), usuarioId, produtoId, nota, comentario);
+  } finally {
+    db.close();
+  }
+}
 
 if (process.argv.includes("--init")) {
   inicializarBanco();
