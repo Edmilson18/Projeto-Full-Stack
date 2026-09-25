@@ -1,8 +1,10 @@
 # ADR 002: Fastify como framework de API
 
-- **Status:** Proposta
+- **Status:** Aceita
 - **Data:** 2026-09-25
 - **Escopo:** Backend
+- **Implementada em:** Fase 3. O `packages/shared` tem os schemas de entrada e
+  as respostas continuam sem contrato tipado, o que é o que a Fase 6 consome.
 
 ## Contexto
 

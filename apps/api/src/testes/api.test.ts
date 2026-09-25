@@ -1,17 +1,17 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { ADMIN, iniciarServidor, type Cliente } from "./ajuda.js";
-import { limparSessoes } from "../server.js";
+import { ADMIN, iniciarContexto, type Cliente } from "./ajuda.js";
+import { limparSessoes } from "../rotas/auth.js";
 
-let servidor: Awaited<ReturnType<typeof iniciarServidor>>;
+let contexto: Awaited<ReturnType<typeof iniciarContexto>>;
 let novo: () => Cliente;
 
 beforeAll(async () => {
-  servidor = await iniciarServidor();
-  novo = servidor.cliente;
+  contexto = await iniciarContexto();
+  novo = contexto.novoCliente;
 });
 
 afterAll(async () => {
-  await servidor.encerrar();
+  await contexto.encerrar();
 });
 
 /** Cria um cliente novo, autenticado, com papel de cliente comum. */
@@ -48,8 +48,14 @@ describe("autenticação", () => {
   });
 
   it("rejeita e-mail inexistente com a mesma mensagem de senha errada", async () => {
-    const respotaExistente = await novo().post("/api/login", { email: ADMIN.email, senha: "x" });
-    const respostaInexistente = await novo().post("/api/login", { email: "ninguem@exemplo.com", senha: "x" });
+    // A senha precisa ter 6 caracteres: com uma mais curta, o Zod recusa com
+    // 400 antes de qualquer consulta, e o teste deixaria de medir o que
+    // realmente quer medir, que é a impossibilidade de enumerar contas.
+    const respotaExistente = await novo().post("/api/login", { email: ADMIN.email, senha: "senhaErrada1" });
+    const respostaInexistente = await novo().post("/api/login", {
+      email: "ninguem@exemplo.com",
+      senha: "senhaErrada1",
+    });
 
     // Mensagem igual impede enumerar quais e-mails existem na base.
     expect(respostaInexistente.status).toBe(401);
@@ -120,15 +126,26 @@ describe("cadastro", () => {
 });
 
 describe("permissões administrativas", () => {
-  it("bloqueia anônimo em todas as rotas de admin", async () => {
-    const cliente = novo();
+  it("responde 401 para anônimo e 403 para cliente comum", async () => {
+    const anonimo = novo();
     for (const [metodo, rota] of [
       ["get", "/api/dashboard"],
       ["get", "/api/admin/produtos"],
       ["get", "/api/admin/pedidos"],
     ] as const) {
-      const resposta = await cliente[metodo](rota);
-      expect(resposta.status).toBe(403);
+      // 401 para anônimo: autenticar resolve. 403 para cliente comum: há
+      // sessão, mas o papel não basta. A distinção é o que permite ao
+      // frontend decidir entre abrir o modal de login e mostrar erro.
+      expect((await anonimo[metodo](rota)).status).toBe(401);
+    }
+
+    const cliente = await clienteComum();
+    for (const [metodo, rota] of [
+      ["get", "/api/dashboard"],
+      ["get", "/api/admin/produtos"],
+      ["get", "/api/admin/pedidos"],
+    ] as const) {
+      expect((await cliente[metodo](rota)).status).toBe(403);
     }
   });
 
@@ -300,12 +317,24 @@ describe("tratamento de erro", () => {
   });
 
   it("devolve 400 para JSON malformado em rota de login", async () => {
-    const resposta = await fetch(`${novo().base}/api/login`, {
+    // `inject` com string crua simula corpo que não é JSON, que é o que o
+    // tratador de erro do Fastify precisa converter em 400.
+    const resposta = await contexto.app.inject({
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: "{ isso nao e json",
+      url: "/api/login",
+      headers: { "content-type": "application/json" },
+      payload: "{ isso nao e json",
     });
+    expect(resposta.statusCode).toBe(400);
+  });
+
+  it("devolve 400 com a mensagem do Zod quando o corpo não casa com o schema", async () => {
+    const cliente = novo();
+    const resposta = await cliente.post("/api/login", { email: "nao-e-email", senha: "123" });
     expect(resposta.status).toBe(400);
+    // A mensagem vem do schema, não de uma string duplicada na rota.
+    expect(typeof resposta.corpo.erro).toBe("string");
+    expect(resposta.corpo.erro.length).toBeGreaterThan(0);
   });
 
   it("não derruba o servidor após uma requisição inválida", async () => {
@@ -323,5 +352,25 @@ describe("sessões em memória", () => {
 
     limparSessoes();
     expect((await cliente.get("/api/sessao")).corpo.usuario).toBeNull();
+  });
+});
+
+describe("rate limit", () => {
+  it("bloqueia quando o limite é excedido", async () => {
+    // Contexto separado, com o rate limit ligado. A suíte principal roda sem
+    // ele, senão as próprias requisições dos outros testes seriam barradas.
+    const comLimite = await iniciarContexto({ semRateLimit: false });
+    try {
+      const respostas: number[] = [];
+      // /api/login tem limite próprio de 10 por minuto.
+      for (let tentativa = 0; tentativa < 14; tentativa++) {
+        respostas.push(
+          (await comLimite.novoCliente().post("/api/login", { email: "x@y.com", senha: "errada123" })).status,
+        );
+      }
+      expect(respostas).toContain(429);
+    } finally {
+      await comLimite.encerrar();
+    }
   });
 });

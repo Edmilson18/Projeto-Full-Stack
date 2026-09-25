@@ -14,8 +14,13 @@
     "db:init": "node --experimental-sqlite --import tsx src/database.ts --init"
   },
   "dependencies": {
+    "@fastify/cookie": "^11.1.2",
+    "@fastify/cors": "^11.3.0",
+    "@fastify/helmet": "^13.1.1",
+    "@fastify/rate-limit": "^11.2.0",
     "@loja/shared": "*",
-    "dotenv": "^18.0.4"
+    "dotenv": "^18.0.4",
+    "fastify": "^5.12.5"
   },
   "devDependencies": {
     "@types/node": "^26.4.1",

@@ -28,6 +28,12 @@ export const ambiente = {
   /** Painéis antigos, que o `admin.html` e o `dashboard.html` ainda carregam. */
   buildLegado: path.join(raizProjeto, "build"),
   raiz: raizProjeto,
+  /**
+   * Assinatura dos cookies. Ausente em desenvolvimento, onde não é preciso:
+   * `signed: false` no cookie, mas o valor precisa existir para o plugin não
+   * recusar a inicialização.
+   */
+  cookieSecret: process.env.COOKIE_SECRET ?? "desenvolvimento-sem-assinatura",
 };
 
 export const ehTeste = process.env.NODE_ENV === "test";

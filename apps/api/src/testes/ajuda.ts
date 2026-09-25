@@ -1,111 +1,117 @@
-import type { Server } from "node:http";
-import { criarServidor, limparSessoes } from "../server.js";
+import type { FastifyInstance } from "fastify";
+import { criarApp } from "../app.js";
+import { limparSessoes } from "../rotas/auth.js";
 
 /**
- * Cliente HTTP mínimo para os testes de integração.
+ * Cliente HTTP para os testes de integração.
  *
- * Reproduz o que o navegador faz e o que a biblioteca de requisição simples
- * não faz: guarda o cookie de sessão e o reenvia. Sem isso, cada requisição
- * pareceria anônima e não daria para testar a autorização.
+ * Usa `app.inject()`, que faz a requisição pelo ciclo do Fastify sem abrir
+ * socket. É mais rápido que subir um servidor e mais fiel que chamar as
+ * funções de rota direto, porque percorre hooks, serialização e o tratador
+ * de erro — exatamente o caminho de produção.
  */
 export type Cliente = {
-  base: string;
-  cookie: string | null;
-  get(rota: string): Promise<Resposta>;
-  post(rota: string, corpo?: unknown): Promise<Resposta>;
-  put(rota: string, corpo?: unknown): Promise<Resposta>;
-  patch(rota: string, corpo?: unknown): Promise<Resposta>;
-  delete(rota: string): Promise<Resposta>;
+  /** Cookie de sessão em uso, ou `null` para cliente anônimo. */
+  readonly cookie: string | null;
+  get(rota: string, cabecalhos?: Record<string, string>): Promise<Resposta>;
+  post(rota: string, corpo?: unknown, cabecalhos?: Record<string, string>): Promise<Resposta>;
+  put(rota: string, corpo?: unknown, cabecalhos?: Record<string, string>): Promise<Resposta>;
+  patch(rota: string, corpo?: unknown, cabecalhos?: Record<string, string>): Promise<Resposta>;
+  delete(rota: string, cabecalhos?: Record<string, string>): Promise<Resposta>;
 };
 
 export type Resposta = {
   status: number;
-  // `any` aqui e proposital, e e a divida que estes testes existem para medir: a
-  // API nao tem contrato tipado, entao o corpo de qualquer resposta e
-  // estruturalmente desconhecido. Quando o schema Zod entrar, na Fase 3, este
-  // vira o tipo inferido e os `as` somem junto.
+  // `any` aqui é proposital, e é a dívida que estes testes existem para medir:
+  // a API não tem contrato de resposta tipado. Quando a Fase 3 tipar as
+  // respostas, este campo passa a ser o tipo inferido do schema Zod e os `as`
+  // do arquivo somem junto.
   // eslint-disable-next-line typescript/no-explicit-any
   corpo: any;
+  cookies: Array<{ name: string; value: string }>;
 };
 
-export async function iniciarServidor(): Promise<{
-  servidor: Server;
-  cliente: () => Cliente;
+export type Contexto = {
+  app: FastifyInstance;
+  novoCliente: () => Cliente;
   encerrar: () => Promise<void>;
-}> {
-  const servidor = criarServidor();
+};
+
+/** Lê o valor de um cookie a partir da lista que o `inject` devolve. */
+function lerCookie(setCookies: Array<{ name: string; value: string }>, nome: string): string | null {
+  return setCookies.find((cookie) => cookie.name === nome)?.value ?? null;
+}
+
+export async function iniciarContexto(opcoes: { semRateLimit?: boolean } = {}): Promise<Contexto> {
+  const app = criarApp({ semRateLimit: opcoes.semRateLimit ?? true });
+  await app.ready();
   limparSessoes();
 
-  await new Promise<void>((resolve) => servidor.listen(0, resolve));
-  const endereco = servidor.address();
-  if (!endereco || typeof endereco === "string")
-    throw new Error("Não foi possível descobrir a porta do servidor de teste.");
-  const base = `http://127.0.0.1:${endereco.port}`;
-
-  const criarCliente = (): Cliente => {
+  const novoCliente = (): Cliente => {
+    // Par `nome=valor` do cookie de sessão, ou null para anônimo.
     let cookie: string | null = null;
 
-    const enviar = async (metodo: string, rota: string, corpo?: unknown): Promise<Resposta> => {
-      const cabecalhos: Record<string, string> = {};
-      if (corpo !== undefined) cabecalhos["Content-Type"] = "application/json";
-      if (cookie) cabecalhos.Cookie = cookie;
+    const enviar = async (
+      metodo: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
+      rota: string,
+      corpo?: unknown,
+      cabecalhos?: Record<string, string>,
+    ): Promise<Resposta> => {
+      const injetados: Record<string, string> = { ...cabecalhos };
+      if (corpo !== undefined) injetados["content-type"] = "application/json";
+      if (cookie) injetados.cookie = cookie;
 
-      const resposta = await fetch(`${base}${rota}`, {
-        method: metodo,
-        headers: cabecalhos,
-        ...(corpo !== undefined ? { body: JSON.stringify(corpo) } : {}),
-        redirect: "manual",
-      });
+      const resposta = await app.inject({ method: metodo, url: rota, payload: corpo as never, headers: injetados });
 
-      const definido = resposta.headers.getSetCookie?.() ?? [];
-      const primeiro = definido[0];
-      const [valor] = primeiro ? primeiro.split(";") : [];
-      if (valor) {
-        // Set-Cookie com Max-Age=0 limpa a sessao.
-        cookie = valor.endsWith("=") ? null : valor;
-      }
+      const definido = lerCookie(resposta.cookies, "loja_session");
+      // Guarda o par `nome=valor` completo, que é o que vai no cabeçalho. É
+      // também o que o teste inspeciona, para confirmar que o cookie tem o
+      // nome esperado e não só algum valor.
+      if (definido !== null) cookie = definido === "" ? null : `loja_session=${definido}`;
 
-      const texto = await resposta.text();
-      let dados: unknown = texto;
+      // eslint-disable-next-line typescript/no-explicit-any
+      let dados: any = resposta.body;
       try {
-        dados = JSON.parse(texto);
+        dados = JSON.parse(resposta.body);
       } catch {
-        // resposta nao-JSON (ex.: arquivo estatico) segue como texto
+        // resposta não-JSON, como um arquivo estático
       }
-      return { status: resposta.status, corpo: dados };
+
+      return { status: resposta.statusCode, corpo: dados, cookies: resposta.cookies };
     };
 
     return {
-      base,
       get cookie() {
         return cookie;
       },
-      get: (rota) => enviar("GET", rota),
-      post: (rota, corpo) => enviar("POST", rota, corpo),
-      put: (rota, corpo) => enviar("PUT", rota, corpo),
-      patch: (rota, corpo) => enviar("PATCH", rota, corpo),
-      delete: (rota) => enviar("DELETE", rota),
+      get: (rota, cabecalhos) => enviar("GET", rota, undefined, cabecalhos),
+      post: (rota, corpo, cabecalhos) => enviar("POST", rota, corpo, cabecalhos),
+      put: (rota, corpo, cabecalhos) => enviar("PUT", rota, corpo, cabecalhos),
+      patch: (rota, corpo, cabecalhos) => enviar("PATCH", rota, corpo, cabecalhos),
+      delete: (rota, cabecalhos) => enviar("DELETE", rota, undefined, cabecalhos),
     };
   };
 
   return {
-    servidor,
-    cliente: criarCliente,
-    encerrar: () => new Promise<void>((resolve, reject) => servidor.close((erro) => (erro ? reject(erro) : resolve()))),
+    app,
+    novoCliente,
+    encerrar: async () => {
+      await app.close();
+    },
   };
 }
 
-/** Autentica um cliente novo com as credenciais passadas. */
+/** Autentica um cliente novo. Lança se o login falhar. */
 export async function clienteAutenticado(
-  criar: () => Cliente,
+  novo: () => Cliente,
   email: string,
   senha: string,
   // eslint-disable-next-line typescript/no-explicit-any
 ): Promise<{ cliente: Cliente; usuario: any }> {
-  const cliente = criar();
+  const cliente = novo();
   const resposta = await cliente.post("/api/login", { email, senha });
   if (resposta.status !== 200) throw new Error(`Falha no login de ${email}: ${resposta.status}`);
-  return { cliente, usuario: resposta.corpo.usuario };
+  return { cliente, usuario: resposta.corpo };
 }
 
 export const ADMIN = { email: "admin@lojaficticia.com", senha: "admin123" };
