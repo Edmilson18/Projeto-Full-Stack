@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import {
   cadastroBody,
   loginBody,
@@ -10,6 +11,10 @@ import {
 import {
   buscarUsuarioPorEmail,
   buscarUsuarioPorId,
+  criarSessao,
+  encerrarSessao,
+  expirarSessao,
+  obterSessao,
   criarTokenRedefinicaoSenha,
   criarUsuario,
   redefinirSenhaComToken,
@@ -17,32 +22,29 @@ import {
   verificarSenha,
 } from "../database.js";
 import { ErroApp } from "../erros.js";
-import { randomUUID } from "node:crypto";
 
-const COOKIE_SESSAO = "loja_session";
+export const COOKIE_SESSAO = "loja_session";
 const DURACAO_SESSAO_MS = 1000 * 60 * 60 * 12;
 
-/**
- * Sessões em memória. Um `Map` não sobrevive a reinício e não é compartilhado
- * entre instâncias: a Fase 5 move isso para o banco.
- */
-const sessoes = new Map<string, { usuarioId: string; expiraEm: number }>();
-
 export type SessaoUsuario = { id: string; nome: string; email: string; role: Role };
+
+/** Hash do token do cookie, que é o que fica gravado no banco. */
+export function hashToken(token: string): string {
+  return createHash("sha256").update(token).digest("hex");
+}
 
 /** Usuário da requisição atual, ou `undefined` para visitante anônimo. */
 export async function usuarioDaRequisicao(req: FastifyRequest): Promise<SessaoUsuario | undefined> {
   const token = req.cookies[COOKIE_SESSAO];
   if (!token) return undefined;
 
-  const sessao = sessoes.get(token);
-  if (!sessao) return undefined;
-  if (sessao.expiraEm < Date.now()) {
-    sessoes.delete(token);
-    return undefined;
-  }
+  // A sessão está no banco desde a Fase 5. Antes era um Map em memória,
+  // que perdia tudo a cada reinício do processo e não compartilhava estado
+  // entre instâncias em serverless.
+  const usuarioId = await obterSessao(hashToken(token));
+  if (!usuarioId) return undefined;
 
-  const usuario = await buscarUsuarioPorId(sessao.usuarioId);
+  const usuario = await buscarUsuarioPorId(usuarioId);
   return usuario ? { id: usuario.id, nome: usuario.nome, email: usuario.email, role: usuario.role as Role } : undefined;
 }
 
@@ -60,29 +62,24 @@ export async function exigirAdmin(req: FastifyRequest): Promise<SessaoUsuario> {
   return usuario;
 }
 
-function criarSessao(reply: FastifyReply, usuarioId: string, seguro: boolean) {
-  const token = randomUUID() + randomUUID();
-  sessoes.set(token, { usuarioId, expiraEm: Date.now() + DURACAO_SESSAO_MS });
-
+function definirCookieSessao(reply: FastifyReply, token: string) {
   reply.setCookie(COOKIE_SESSAO, token, {
     httpOnly: true,
     sameSite: "lax",
     path: "/",
     maxAge: DURACAO_SESSAO_MS / 1000,
-    // `secure` é obrigatório em produção: sem isso o cookie trafega em claro
-    // em qualquer conexão que não seja HTTPS.
-    secure: seguro,
+    // `secure` e obrigatorio em producao: sem isso o cookie trafega em claro
+    // em qualquer conexao que nao seja HTTPS.
+    secure: process.env.NODE_ENV === "production",
   });
 }
 
 /** Limpa todas as sessões. Usado entre cenários de teste. */
-export function limparSessoes(): void {
-  sessoes.clear();
+export function limparSessoes() {
+  return expirarSessao();
 }
 
 export async function registrarRotasAuth(app: FastifyInstance) {
-  const seguro = process.env.NODE_ENV === "production";
-
   app.post("/api/login", { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } }, async (req, reply) => {
     const { email, senha } = loginBody.parse(req.body);
 
@@ -96,18 +93,20 @@ export async function registrarRotasAuth(app: FastifyInstance) {
     // Migra senhas antigas para scrypt no primeiro login bem-sucedido.
     if (!usuario.senha.startsWith("scrypt$")) await atualizarSenhaUsuario(usuario.id, senha);
 
-    criarSessao(reply, usuario.id, seguro);
+    const token = randomBytes(32).toString("hex");
+    await criarSessao(token, usuario.id, DURACAO_SESSAO_MS);
+    definirCookieSessao(reply, token);
+
     // O envelope `{ usuario }` é o contrato que o frontend já consome. Trocá-lo
-    // aqui quebraria `App.tsx` sem que nenhuma waivedchange no servidor
-    // indicasse o problema.
+    // aqui quebraria `App.tsx` sem que nada no servidor indicasse o problema.
     return {
       usuario: usuarioPublico.parse({ id: usuario.id, nome: usuario.nome, email: usuario.email, role: usuario.role }),
     };
   });
 
-  app.post("/api/logout", async (_req, reply) => {
-    const token = _req.cookies[COOKIE_SESSAO];
-    if (token) sessoes.delete(token);
+  app.post("/api/logout", async (req, reply) => {
+    const token = req.cookies[COOKIE_SESSAO];
+    if (token) await encerrarSessao(hashToken(token));
     reply.clearCookie(COOKIE_SESSAO, { path: "/" });
     return { mensagem: "Sessão encerrada." };
   });
@@ -131,7 +130,9 @@ export async function registrarRotasAuth(app: FastifyInstance) {
       throw erro;
     }
 
-    criarSessao(reply, id, seguro);
+    const token = randomBytes(32).toString("hex");
+    await criarSessao(token, id, DURACAO_SESSAO_MS);
+    definirCookieSessao(reply, token);
     reply.code(201);
     return { usuario: { id, nome, email, role: "cliente" as const } };
   });

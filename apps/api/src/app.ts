@@ -88,6 +88,35 @@ export function criarApp(opcoes: OpcoesApp = {}) {
   }
 
   /**
+   * Verificação de `Origin` nas rotas que alteram dados.
+   *
+   * `SameSite=Lax` já barra o cookie em requisições de origem cruzada na
+   * maioria das navegações, mas não em todas: um `<form>` apontando para a API
+   * conta como requisição de primeira parte em alguns navegadores. Comparar o
+   * `Origin` declarado com a origem esperada fecha esse resto.
+   *
+   * Só para métodos que mudam estado: `GET` é seguro por definição, e exigir
+   * `Origin` em leitura quebraria o compartilhamento de link.
+   */
+  const METODOS_SEGUROS = new Set(["GET", "HEAD", "OPTIONS"]);
+
+  app.addHook("onRequest", async (req, reply) => {
+    if (METODOS_SEGUROS.has(req.method)) return;
+
+    const origem = req.headers.origin;
+    // Ausente de requisições que não vêm de navegador (curl, health check).
+    if (!origem) return;
+
+    const permitida = ambiente.producao
+      ? origem === ambiente.origemPermitida
+      : /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origem);
+
+    if (!permitida) {
+      reply.code(403).send({ erro: "Origem não permitida." });
+    }
+  });
+
+  /**
    * Tratador único de erro.
    *
    * `ErroApp` chega ao cliente com o status e a mensagem que carrega. `ZodError`

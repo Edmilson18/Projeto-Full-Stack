@@ -73,6 +73,109 @@ export function atualizarSenhaUsuario(id: string, senha: string) {
   return obterPool().query("UPDATE usuarios SET senha = $1 WHERE id = $2", [criarHashSenha(senha), id]);
 }
 
+// ── Sessões ────────────────────────────────────────────────────────────────
+
+/**
+ * Sessões persistidas no banco.
+ *
+ * Antes era um `Map` em memória, que perdia toda sessão a cada reinício do
+ * processo e não era compartilhado entre instâncias — o que quebrava em
+ * serverless, onde cada requisição pode cair numa instância diferente.
+ *
+ * O que se guarda é o **hash** do token, nunca o token. Quem tiver acesso de
+ * leitura ao banco não consegue forjar uma sessão, porque precisaria do valor
+ * original, que só existe no cookie do cliente.
+ */
+export async function criarSessao(token: string, usuarioId: string, duracaoMs: number): Promise<void> {
+  // O hash é calculado aqui dentro, e não no chamador, para que não exista
+  // caminho que grave o token cru. É a fronteira de segurança: o valor original
+  // só pode existir no cookie do cliente.
+  const tokenHash = createHash("sha256").update(token).digest("hex");
+
+  // Remove as sessões do mesmo usuário antes de criar uma nova, senão abrir
+  // cinco abas deixa cinco registros válidos até expirarem, e um logout só
+  // derrubaria um deles.
+  await obterPool().query("DELETE FROM sessoes WHERE usuario_id = $1", [usuarioId]);
+  await obterPool().query(
+    "INSERT INTO sessoes (token_hash, usuario_id, expira_em) VALUES ($1, $2, now() + ($3::bigint * interval '1 millisecond'))",
+    [tokenHash, usuarioId, String(duracaoMs)],
+  );
+}
+
+/** Devolve o id do usuário da sessão, ou `undefined` se não existir ou tiver expirado. */
+export async function obterSessao(tokenHash: string): Promise<string | undefined> {
+  const resultado = await obterPool().query<{ usuario_id: string }>(
+    "SELECT usuario_id FROM sessoes WHERE token_hash = $1 AND expira_em > now()",
+    [tokenHash],
+  );
+  return resultado.rows[0]?.usuario_id;
+}
+
+export function encerrarSessao(tokenHash: string) {
+  return obterPool().query("DELETE FROM sessoes WHERE token_hash = $1", [tokenHash]);
+}
+
+/** Apaga todas as sessões. Usado entre cenários de teste. */
+export function expirarSessao() {
+  return obterPool().query("DELETE FROM sessoes");
+}
+
+/**
+ * Remove sessões vencidas.
+ *
+ * Sem isso a tabela só cresce: uma sessão expirada continua no banco até
+ * alguém reapresentar o token. Rodar na inicialização do servidor resolve,
+ * porque o custo é de uma única consulta.
+ */
+export function limparSessoesExpiradas(): Promise<{ rowCount: number | null }> {
+  return obterPool().query("DELETE FROM sessoes WHERE expira_em <= now()");
+}
+
+// ── Auditoria ──────────────────────────────────────────────────────────────
+
+/**
+ * Registra uma mudança para auditoria.
+ *
+ * Guarda o antes e o depois em JSONB, o que permite reconstruir a alteração
+ * sem depender do estado atual. `usuario_id` é quem executou, não quem é
+ * dono da entidade: a diferença importa quando um admin edita o pedido de
+ * outra pessoa.
+ */
+export function registrarAuditoria(entrada: {
+  entidade: string;
+  entidadeId: string;
+  acao: string;
+  antes?: Record<string, unknown> | null;
+  depois?: Record<string, unknown> | null;
+  usuarioId?: string | null;
+}) {
+  return obterPool().query(
+    "INSERT INTO auditoria (id, entidade, entidade_id, acao, antes, depois, usuario_id) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+    [
+      randomUUID(),
+      entrada.entidade,
+      entrada.entidadeId,
+      entrada.acao,
+      entrada.antes ? JSON.stringify(entrada.antes) : null,
+      entrada.depois ? JSON.stringify(entrada.depois) : null,
+      entrada.usuarioId ?? null,
+    ],
+  );
+}
+
+export async function listarAuditoria(entidade: string, entidadeId: string) {
+  const resultado = await obterPool().query(
+    `SELECT a.id, a.acao, a.antes, a.depois, a.criado_em, u.nome AS usuario
+     FROM auditoria a
+     LEFT JOIN usuarios u ON u.id = a.usuario_id
+     WHERE a.entidade = $1 AND a.entidade_id = $2
+     ORDER BY a.criado_em DESC
+     LIMIT 50`,
+    [entidade, entidadeId],
+  );
+  return resultado.rows;
+}
+
 // ── Usuários ───────────────────────────────────────────────────────────────
 
 /** Garante que existe um administrador, criando-o com senha padrão se preciso. */

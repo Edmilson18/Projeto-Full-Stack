@@ -33,6 +33,12 @@ export const ambiente = {
 
   /** Build do frontend, servido pelo Node em produção. */
   dist: path.join(raizProjeto, "apps", "web", "dist"),
+  /**
+   * Origem do frontend em produção, usada na verificação de `Origin` das rotas
+   * que alteram dados. Sem isso, um site terceiro poderia disparar um POST
+   * autenticado pela sessão do usuário.
+   */
+  origemPermitida: process.env.APP_URL ?? "http://localhost:3000",
   /** Painéis antigos, que o `admin.html` e o `dashboard.html` ainda carregam. */
   buildLegado: path.join(raizProjeto, "build"),
   raiz: raizProjeto,
