@@ -154,8 +154,8 @@ npm run dev
 Em outra aba:
 
 ```bash
-Get-ChildItem .tmp\teste.db      # Windows
-ls -la .tmp/teste.db             # Linux/macOS
+Get-ChildItem .cache\teste.db     # Windows
+ls -la .cache/teste.db            # Linux/macOS
 ```
 
 Abra `http://localhost:3000/api/produtos` no navegador. Os produtos devem ser os

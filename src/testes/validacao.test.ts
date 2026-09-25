@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { validarCadastro, validarProduto } from "./validacao.js";
+import { validarCadastro, validarProduto } from "../validacao.js";
 
 const produtoValido = {
   nome: "Teclado Mecânico",

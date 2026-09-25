@@ -37,7 +37,7 @@ export default defineConfig({
     // cada execucao, em src/testes/preparacao.ts.
     env: {
       NODE_ENV: "test",
-      DATABASE_FILE: ".tmp/teste.db",
+      DATABASE_FILE: ".cache/teste.db",
     },
 
     coverage: {

@@ -12,7 +12,7 @@ database/*.db-shm
 
 # Banco usado pela suite de testes. Apagado e recriado a cada execucao por
 # src/testes/preparacao.ts, e por isso nunca deve ser versionado.
-.tmp/
+.cache/
 test.db
 
 .env
@@ -27,4 +27,8 @@ Thumbs.db
 
 # Diario pessoal de fases. Fica local de proposito: o registro que vai para o
 # GitHub sao os ADRs em docs/adr/, nao o roadmap de trabalho em andamento.
-UPGRADES.md
+.local/
+
+# Rascunho antigo de notas, substituido por .local/UPGRADES.md. Ignorado para
+# nao voltar por accident se for recriado.
+PROJETO FULL STACK.txt
