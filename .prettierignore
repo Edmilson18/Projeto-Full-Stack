@@ -1,0 +1,6 @@
+build/
+dist/
+node_modules/
+database/
+package-lock.json
+*.md

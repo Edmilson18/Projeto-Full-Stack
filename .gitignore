@@ -1,8 +1,26 @@
 node_modules/
 build/
 dist/
+coverage/
+*.tsbuildinfo
+
+# Banco local. O schema versionado esta em database/schema.sql.
 database/*.db
+database/*.db-journal
+database/*.db-wal
+database/*.db-shm
 test.db
+
 .env
 .env.*
 !.env.example
+
+# Logs e temporarios
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+
+# Diario pessoal de fases. Fica local de proposito: o registro que vai para o
+# GitHub sao os ADRs em docs/adr/, nao o roadmap de trabalho em andamento.
+UPGRADES.md

@@ -1,0 +1,11 @@
+# Normaliza quebras de linha no repositório inteiro.
+# Evita o bug de encoding/CRLF que corrompe acentos entre Windows e Linux.
+* text=auto eol=lf
+
+# Arquivos que devem permanecer binários.
+*.db binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.ico binary

@@ -39,19 +39,58 @@ Aplicação full-stack de e-commerce desenvolvida como projeto de portfólio. A 
 ## Tecnologias
 
 - React 19
-- TypeScript
+- TypeScript 7
 - Vite
 - Node.js
 - SQLite (`node:sqlite`)
 - CSS responsivo
 - Lucide React
 
+### Qualidade de código
+
+- **oxlint** com suporte *type-aware* via `oxlint-tsgolint`
+- **Prettier**
+- **Vitest**
+- **Husky** + **lint-staged**
+- Git hooks: `pre-commit` roda lint e formatação; `pre-push` roda typecheck e testes
+
+> **Por que oxlint e nao ESLint?** O `typescript-eslint` ainda nao suporta
+> TypeScript 7 — ele lanca `Error: typescript-eslint does not support TS 7.0.`
+> no carregamento. O oxlint le a TS 7 nativamente pelo `oxlint-tsgolint`, o que
+> mantem a verificacao de tipos ativa. Detalhes em `.oxlintrc.jsonc`.
+
 ## Como executar
 
 ### Pré-requisitos
 
-- [Node.js](https://nodejs.org/) 24 ou superior.
+- [Node.js](https://nodejs.org/) 24 ou superior (a versao esta fixada em `.nvmrc`).
 - npm.
+
+### Comandos
+
+| Comando | O que faz |
+| --- | --- |
+| `npm run dev` | Sobe a API (3000) e o Vite (5173) juntos. |
+| `npm run build` | Limpa `build/` e `dist/`, compila o servidor e o frontend. |
+| `npm start` | Sobe o servidor ja compilado. |
+| `npm run db:init` | Recria o banco a partir de `database/schema.sql`. |
+| `npm run typecheck` | `tsc --noEmit`. |
+| `npm run lint` | oxlint com analise de tipos. |
+| `npm run lint:fix` | Aplica as correcoes automaticas do linter. |
+| `npm run format` | Prettier em modo escrita. |
+| `npm run format:check` | Verifica a formatacao sem escrever. |
+| `npm test` | Roda a suite uma vez. |
+| `npm run test:watch` | Modo interativo. |
+| `npm run test:coverage` | Relatorio de cobertura. |
+| `npm run verify` | `typecheck` + `lint` + `test`. Roda no `pre-push` e no CI. |
+| `npm run clean` | Remove `build/`, `dist/` e `coverage/`. |
+
+### Variaveis de ambiente
+
+Copie `.env.example` para `.env`. **`NODE_ENV` precisa ser definido**: sem ele o
+servidor assume `development`, o que expoe o token de redefinicao de senha na
+resposta de `/api/recuperar-senha`. O servidor avisa no console quando o valor
+falta.
 
 ### Instalação
 
@@ -97,7 +136,12 @@ Use essas credenciais somente no ambiente local de demonstração. Antes de publ
 │   ├── dashboard.ts        # Métricas e relatórios
 │   ├── database.ts         # Acesso ao SQLite e regras de dados
 │   ├── server.ts           # API HTTP e sessão
-│   └── validacao.ts        # Validações do domínio
+│   ├── validacao.ts        # Validações do domínio
+│   └── validacao.test.ts   # Testes unitários das validações
+├── .oxlintrc.jsonc         # Configuração do linter, com justificativa por regra
+├── .prettierrc.json        # Configuração de formatação
+├── tsconfig.json           # Typecheck e IDE (inclui os testes)
+├── tsconfig.build.json     # Build de produção (exclui os testes)
 ├── admin.html              # Painel administrativo
 ├── dashboard.html          # Dashboard
 ├── package.json
@@ -127,16 +171,38 @@ Use essas credenciais somente no ambiente local de demonstração. Antes de publ
 - Senhas são armazenadas com hash `scrypt` e comparação segura.
 - A autorização no backend é feita por sessão identificada em cookie `HttpOnly`; dados no `localStorage` são usados somente para personalizar a interface, não para autorizar ações.
 - A sessão é mantida em memória. Portanto, é adequada para demonstração local, mas não para múltiplas instâncias ou produção.
+- O token de redefinição de senha só é incluído na resposta quando `NODE_ENV` **não** é `production`. O valor precisa ser definido explicitamente; o servidor avisa no console quando falta.
 - O cookie deve receber a opção `Secure` quando o projeto estiver hospedado com HTTPS.
 - Pagamento, frete, e-mail e upload de imagens são simulados ou baseados em URL.
+- Ainda não há rate limiting, cabeçalhos de segurança (CSP/HSTS) nem verificação de `Origin` nas rotas mutáveis.
+
+## Dívidas técnicas conhecidas
+
+Coletadas pelo `npm run lint` e pelo `npm run typecheck`. Todas têm a mesma
+causa raiz: a API devolve `Record<string, unknown>` e o frontend não tem um
+contrato tipado.
+
+| Item | Onde | Quando |
+| --- | --- | --- |
+| 43 `String(objeto)` podem renderizar `[object Object]` | `src/App.tsx` | Fase 3 e 6 |
+| 11 `Promise` sem `await`, sem `catch` e sem `void` | `src/App.tsx` | Fase 6 |
+| 33 `as` em cima de `unknown` | ambos | Fase 3 |
+| 5 template literals com valor possivelmente `null`/`undefined` | `src/App.tsx` | Fase 6 |
+| `App.tsx` concentra 55 `useState` em um único componente | `src/App.tsx` | Fase 6 |
+| `server.ts` roteia por um encadeamento de `if` | `src/server.ts` | Fase 3 |
+| Dinheiro armazenado como `REAL` (ponto flutuante) | `database/schema.sql` | Fase 4 |
+| Sem paginação nas listagens | `src/database.ts` | Fase 3 |
+| Busca e filtro de pedidos rodam no cliente | `src/admin.ts` | Fase 6 |
 
 ## Próximos passos
 
-- Integrar pagamentos e cálculo de frete reais.
-- Armazenar sessões em Redis ou banco de dados.
-- Adicionar testes automatizados para autenticação, cupons, pedidos e permissões.
+- Migrar o projeto para um monorepo com API e web separados.
+- Tipar as respostas da API com um contrato compartilhado (Zod).
+- Migrar o SQLite para PostgreSQL, com migrações versionadas.
+- Levar a sessão do processo para o banco de dados.
+- Ampliar os testes para autenticação, cupons, pedidos e permissões.
 - Criar upload de imagens e notificações por e-mail.
-- Configurar CI, lint e deploy.
+- Configurar CI e o primeiro deploy.
 
 ## Contribuições
 

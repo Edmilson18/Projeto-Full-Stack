@@ -1,0 +1,49 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript", "unicorn", "oxc", "react", "react-hooks"],
+  "env": {
+    "builtin": true,
+    "es2024": true,
+    "node": true,
+    "browser": true,
+  },
+  "categories": {
+    "correctness": "error",
+    "suspicious": "warn",
+    "perf": "warn",
+  },
+  "rules": {
+    "no-unused-vars": "error",
+    "eqeqeq": "error",
+    "no-var": "error",
+    "prefer-const": "error",
+
+    "typescript/no-explicit-any": "error",
+    "typescript/consistent-type-imports": "error",
+
+    "react-hooks/rules-of-hooks": "error",
+    "react-hooks/exhaustive-deps": "warn",
+
+    // Falso positivo conhecido: os setState deste arquivo acontecem depois de
+    // `await fetch(...)`, ou seja, em microtask, nunca sincronamente no effect.
+    "react/set-state-in-effect": "off",
+
+    // Regra obsoleta. Com o JSX transform automatico (`"jsx": "react-jsx"` no
+    // tsconfig) nao e necessario `import React`.Ela gerava 282 dos 395 avisos,
+    // todos falso, e treinar quem lê o output a ignorar avisos.
+    "react/react-in-jsx-scope": "off",
+
+    // Accessa `dados.profil[campo]` em objetos vindos da API como
+    // `Record<string, unknown>`. some com a tipagem das respostas (Fase 3/6).
+    "no-underscore-dangle": "off",
+
+    // As tres regras abaixo ficam em "warn" de proposito na Fase 1.
+    // A causa raiz e que a API devolve `Record<string, unknown>`; corrigir na raiz
+    // e trabalho da Fase 6 (tipar as respostas) e da Fase 3 (contrato Zod).
+    // Ver src/App.tsx:799 para o caso real de "[object Object]" na tela.
+    "typescript/no-base-to-string": "warn",
+    "typescript/no-floating-promises": "warn",
+    "typescript/restrict-template-expressions": "warn",
+  },
+  "ignorePatterns": ["build", "dist", "node_modules", "database", "coverage"],
+}
