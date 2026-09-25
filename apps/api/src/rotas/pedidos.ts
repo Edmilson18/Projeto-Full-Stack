@@ -14,7 +14,7 @@ export async function registrarRotasPedidos(app: FastifyInstance) {
   // ── Cliente ──────────────────────────────────────────────────────────────
 
   app.post("/api/pedidos", async (req, reply) => {
-    const usuario = exigirSessao(req);
+    const usuario = await exigirSessao(req);
     const entrada = pedidoInput.parse(req.body);
 
     // Reuso de cupom é uma operação de escrita, e Limitador simples não
@@ -22,7 +22,7 @@ export async function registrarRotasPedidos(app: FastifyInstance) {
     // de idempotência.
     let pedido;
     try {
-      pedido = criarPedido(usuario.id, entrada.itens, entrada.cupomCodigo, entrada.metodoPagamento);
+      pedido = await criarPedido(usuario.id, entrada.itens, entrada.cupomCodigo, entrada.metodoPagamento);
     } catch (erro) {
       throw ErroApp.badRequest(erro instanceof Error ? erro.message : "Não foi possível concluir o pedido.");
     }
@@ -36,7 +36,7 @@ export async function registrarRotasPedidos(app: FastifyInstance) {
     const texto = String(codigo ?? "").trim();
     if (!texto) throw ErroApp.badRequest("Informe um código de cupom.");
 
-    const resultado = validarCupomCodigo(texto);
+    const resultado = await validarCupomCodigo(texto);
     if (!resultado.valido) {
       return cupomInvalido.parse({ valido: false, erro: resultado.erro ?? "Cupom inválido." });
     }
@@ -46,17 +46,17 @@ export async function registrarRotasPedidos(app: FastifyInstance) {
   // ── Administração ────────────────────────────────────────────────────────
 
   app.get("/api/dashboard", async (req) => {
-    exigirAdmin(req);
+    await exigirAdmin(req);
     return listarDashboard();
   });
 
   app.get("/api/admin/pedidos", async (req) => {
-    exigirAdmin(req);
+    await exigirAdmin(req);
     return listarPedidosAdmin();
   });
 
   app.patch("/api/admin/pedidos/:id", async (req) => {
-    exigirAdmin(req);
+    await exigirAdmin(req);
     const { status } = (req.body ?? {}) as { status?: unknown };
 
     // O schema garante que o status é um dos quatro known, o que antes
@@ -64,7 +64,7 @@ export async function registrarRotasPedidos(app: FastifyInstance) {
     const novo = statusPedido.parse(status);
 
     try {
-      atualizarStatusPedido((req.params as { id: string }).id, novo);
+      await atualizarStatusPedido((req.params as { id: string }).id, novo);
     } catch (erro) {
       throw ErroApp.badRequest(erro instanceof Error ? erro.message : "Não foi possível atualizar o pedido.");
     }

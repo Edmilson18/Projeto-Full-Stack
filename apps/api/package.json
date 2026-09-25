@@ -11,7 +11,10 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "db:init": "node --experimental-sqlite --import tsx src/database.ts --init"
+    "db:migrate": "tsx src/migrar.ts",
+    "db:seed": "tsx src/seed.ts --seed",
+    "db:setup": "tsx src/seed.ts --init",
+    "db:reset": "tsx src/resetar.ts"
   },
   "dependencies": {
     "@fastify/cookie": "^11.1.2",
@@ -20,10 +23,12 @@
     "@fastify/rate-limit": "^11.2.0",
     "@loja/shared": "*",
     "dotenv": "^18.0.4",
-    "fastify": "^5.12.5"
+    "fastify": "^5.12.5",
+    "pg": "^8.23.0"
   },
   "devDependencies": {
     "@types/node": "^26.4.1",
+    "@types/pg": "^8.23.1",
     "tsx": "^4.23.12",
     "typescript": "^7.0.2",
     "vitest": "^5.0.2"

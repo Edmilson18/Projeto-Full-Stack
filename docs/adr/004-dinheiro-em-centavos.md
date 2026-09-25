@@ -1,8 +1,10 @@
 # ADR 004: Valores monetários em centavos inteiros
 
-- **Status:** Proposta
+- **Status:** Aceita
 - **Data:** 2026-09-25
-- **Escopo:** Banco de dados
+- **Implementada em:** Fase 4. As colunas monetárias viraram `INTEGER` em
+  centavos, e o desconto percentual usa `Math.round` para fechar em centavos
+  em vez de propagar meio centavo.
 
 ## Contexto
 

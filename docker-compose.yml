@@ -1,0 +1,22 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: loja-tech-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: loja
+      POSTGRES_PASSWORD: loja_local_dev
+      POSTGRES_DB: loja
+    ports:
+      # Porta 5433 para não conflitar com um Postgres do sistema na 5432.
+      - "5433:5432"
+    volumes:
+      - dados-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U loja -d loja"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  dados-postgres:

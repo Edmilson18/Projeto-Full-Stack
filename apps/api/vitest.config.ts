@@ -13,11 +13,10 @@ export default defineConfig({
     maxWorkers: 1,
     fileParallelism: false,
 
-    // Isola do banco de desenvolvimento. O arquivo é recriado a cada execução,
-    // em src/testes/preparacao.ts.
+    // Isola do banco de desenvolvimento: o schema de teste é criado e apagado
+    // a cada execução, em src/testes/preparacao.ts.
     env: {
       NODE_ENV: "test",
-      DATABASE_FILE: ".cache/teste.db",
     },
 
     coverage: {
