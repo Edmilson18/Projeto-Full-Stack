@@ -1,23 +1,17 @@
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const diretorioBanco = path.resolve(__dirname, "..", "database");
-const caminhoBanco = path.resolve(diretorioBanco, "loja.db");
-const caminhoSchema = path.resolve(diretorioBanco, "schema.sql");
+import { ambiente } from "./config.js";
 
 export function conectarBanco() {
-  return new DatabaseSync(caminhoBanco);
+  return new DatabaseSync(ambiente.banco);
 }
 
 export function inicializarBanco(): void {
-  fs.mkdirSync(diretorioBanco, { recursive: true });
+  fs.mkdirSync(path.dirname(ambiente.banco), { recursive: true });
 
-  const schema = fs.readFileSync(caminhoSchema, "utf-8");
+  const schema = fs.readFileSync(ambiente.schema, "utf-8");
   const db = conectarBanco();
 
   try {
@@ -28,7 +22,7 @@ export function inicializarBanco(): void {
     ).run();
     garantirAdministrador(db);
     console.log("Banco de dados inicializado com sucesso.");
-    console.log(`Arquivo do banco: ${caminhoBanco}`);
+    console.log(`Arquivo do banco: ${ambiente.banco}`);
   } finally {
     db.close();
   }

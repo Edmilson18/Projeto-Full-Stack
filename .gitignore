@@ -9,6 +9,10 @@ database/*.db
 database/*.db-journal
 database/*.db-wal
 database/*.db-shm
+
+# Banco usado pela suite de testes. Apagado e recriado a cada execucao por
+# src/testes/preparacao.ts, e por isso nunca deve ser versionado.
+.tmp/
 test.db
 
 .env

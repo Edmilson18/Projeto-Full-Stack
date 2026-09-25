@@ -3,7 +3,6 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
-import { config as carregarEnv } from "dotenv";
 import {
   inicializarBanco,
   inserirProduto,
@@ -34,27 +33,26 @@ import {
   redefinirSenhaComToken,
 } from "./database.js";
 import { validarCadastro, validarProduto } from "./validacao.js";
+import { ambiente } from "./config.js";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const raizProjeto = path.resolve(__dirname, "..");
-const diretorioDist = path.resolve(raizProjeto, "dist");
+const raizProjeto = ambiente.raiz;
+const diretorioDist = ambiente.dist;
 
-// O caminho e resolvido a partir do projeto, e nao do diretorio atual, para que
-// `npm start` e o servidor compilado leiam o mesmo arquivo.
-carregarEnv({ path: path.join(raizProjeto, ".env") });
-
-if (!process.env.NODE_ENV) {
+if (!process.env.NODE_ENV && !process.env.VITEST) {
   console.warn(
     "[aviso] NODE_ENV nao definido. Assumindo 'development', o que expoe o token de " +
       "redefinicao de senha na resposta de /api/recuperar-senha. Defina NODE_ENV no .env.",
   );
 }
 
-const porta = Number(process.env.PORT ?? 3000);
-const ambienteProducao = process.env.NODE_ENV === "production";
+const ambienteProducao = ambiente.producao;
 const sessoes = new Map<string, { usuarioId: string; expiraEm: number }>();
 const DURACAO_SESSAO_MS = 1000 * 60 * 60 * 12;
+
+/** Zera as sessoes em memoria. Usado entre cenarios de teste. */
+export function limparSessoes(): void {
+  sessoes.clear();
+}
 
 const tipoConteudo: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -631,36 +629,44 @@ async function tratarApi(req: http.IncomingMessage, res: http.ServerResponse, ur
   res.end(JSON.stringify({ erro: "Rota não encontrada." }));
 }
 
-const servidor = http.createServer(async (req, res) => {
-  const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
-  const pathname = url.pathname;
+export function criarServidor(): http.Server {
+  return http.createServer(async (req, res) => {
+    const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+    const pathname = url.pathname;
 
-  if (pathname.startsWith("/api/")) {
-    await tratarApi(req, res, pathname);
-    return;
-  }
+    if (pathname.startsWith("/api/")) {
+      await tratarApi(req, res, pathname);
+      return;
+    }
 
-  if (pathname.startsWith("/build/")) {
+    if (pathname.startsWith("/build/")) {
+      await servirArquivo(res, pathname);
+      return;
+    }
+
+    if (["/", "/index.html", "/admin.html", "/dashboard.html", "/login.html", "/style.css"].includes(pathname)) {
+      await servirArquivo(res, pathname);
+      return;
+    }
+
+    if (pathname === "/favicon.ico") {
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+
     await servirArquivo(res, pathname);
-    return;
-  }
+  });
+}
 
-  if (["/", "/index.html", "/admin.html", "/dashboard.html", "/login.html", "/style.css"].includes(pathname)) {
-    await servirArquivo(res, pathname);
-    return;
-  }
+// Só sobe o servidor quando este arquivo é o ponto de entrada. Um teste importa
+// `criarServidor` e escuta em porta efêmera, sem colidir com a 3000.
+const executadoDiretamente = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 
-  if (pathname === "/favicon.ico") {
-    res.writeHead(204);
-    res.end();
-    return;
-  }
-
-  await servirArquivo(res, pathname);
-});
-
-inicializarBanco();
-
-servidor.listen(porta, () => {
-  console.log(`Servidor da loja rodando em http://localhost:${porta}`);
-});
+if (executadoDiretamente) {
+  inicializarBanco();
+  const servidor = criarServidor();
+  servidor.listen(ambiente.porta, () => {
+    console.log(`Servidor da loja rodando em http://localhost:${ambiente.porta}`);
+  });
+}
