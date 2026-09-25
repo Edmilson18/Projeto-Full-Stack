@@ -1,7 +1,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ambiente } from "./config.js";
-import { inicializarBanco } from "./database.js";
+import { inicializarBanco, limparSessoesExpiradas } from "./database.js";
 import { iniciar } from "./app.js";
 
 /**
@@ -15,7 +15,11 @@ const executadoDiretamente =
   process.argv[1] !== undefined && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 
 if (executadoDiretamente) {
-  inicializarBanco();
+  await inicializarBanco();
+  // Uma sessão vencida continuaria no banco até alguém reapresentar o token.
+  // A limpeza na inicialização custa uma consulta e resolve.
+  const { rowCount } = await limparSessoesExpiradas();
+  if (rowCount) console.log(`Sessões expiradas removidas: ${rowCount}`);
 
   if (!process.env.NODE_ENV) {
     console.warn(

@@ -348,14 +348,183 @@ describe("tratamento de erro", () => {
   });
 });
 
-describe("sessões em memória", () => {
+describe("sessoes persistidas no banco", () => {
+  it("sobrevive a uma nova instancia do app, que antes perdia tudo", async () => {
+    const login = await novo().post("/api/login", ADMIN);
+    expect(login.status).toBe(200);
+    const cookie = novo().cookie;
+    // `novo()` cria um cliente novo, sem sessao. O login acima foi em outro.
+    const comSessao = novo();
+    await comSessao.post("/api/login", ADMIN);
+    const token = comSessao.cookie;
+    expect(token).toBeTruthy();
+
+    // App novo, mesma sessao. Com o Map em memoria da Fase 3, ela
+    // desapareceria junto com o processo anterior.
+    const segundo = await iniciarContexto();
+    try {
+      const sessao = await segundo.novoCliente().get("/api/sessao", { cookie: token ?? "" });
+      expect(sessao.corpo.usuario).not.toBeNull();
+      expect(sessao.corpo.usuario.email).toBe(ADMIN.email);
+    } finally {
+      await segundo.encerrar();
+    }
+    expect(cookie).toBeNull();
+  });
+
+  it("guarda so o hash do token, nunca o valor", async () => {
+    const cliente = novo();
+    await cliente.post("/api/login", ADMIN);
+
+    const { obterPool } = await import("../postgres.js");
+    const linhas = await obterPool().query<{ token_hash: string }>("SELECT token_hash FROM sessoes");
+    expect(linhas.rows.length).toBeGreaterThan(0);
+
+    // Um hash SHA-256 tem 64 hexadecimais. Se o token bruto estivesse no
+    // banco, daria para forjar a sessao de qualquer usuario so lendo a base.
+    for (const linha of linhas.rows) {
+      expect(linha.token_hash).toMatch(/^[0-9a-f]{64}$/);
+    }
+  });
+
+  it("recusa token forjado", async () => {
+    const forjado = await novo().get("/api/sessao", { cookie: "loja_session=" + "a".repeat(64) });
+    expect(forjado.corpo.usuario).toBeNull();
+  });
+
+  it("invalida a sessao no logout", async () => {
+    const cliente = novo();
+    await cliente.post("/api/login", ADMIN);
+    expect((await cliente.get("/api/sessao")).corpo.usuario).not.toBeNull();
+
+    await cliente.post("/api/logout");
+    expect((await cliente.get("/api/sessao")).corpo.usuario).toBeNull();
+  });
+
+  it("descarta sessao expirada", async () => {
+    const cliente = novo();
+    await cliente.post("/api/login", ADMIN);
+    const token = cliente.cookie;
+
+    const { obterPool } = await import("../postgres.js");
+    await obterPool().query("UPDATE sessoes SET expira_em = now() - interval '1 hour'");
+
+    const depois = await novo().get("/api/sessao", { cookie: token ?? "" });
+    expect(depois.corpo.usuario).toBeNull();
+  });
+
+  it("criar uma sessao substitui a anterior do mesmo usuario", async () => {
+    const primeiro = novo();
+    await primeiro.post("/api/login", ADMIN);
+    const tokenAntigo = primeiro.cookie;
+
+    const segundo = novo();
+    await segundo.post("/api/login", ADMIN);
+
+    // Sem a limpeza na criacao, abrir cinco abas deixaria cinco registros
+    // validos ate expirarem, e um logout so derrubaria um deles.
+    const antiga = await novo().get("/api/sessao", { cookie: tokenAntigo ?? "" });
+    expect(antiga.corpo.usuario).toBeNull();
+  });
+
   it("limpar as sessoes invalida todas de uma vez", async () => {
     const cliente = novo();
     await cliente.post("/api/login", ADMIN);
     expect((await cliente.get("/api/sessao")).corpo.usuario).not.toBeNull();
 
-    limparSessoes();
+    await limparSessoes();
     expect((await cliente.get("/api/sessao")).corpo.usuario).toBeNull();
+  });
+});
+
+describe("verificacao de origem", () => {
+  it("recusa escrita vinda de origem de terceiros", async () => {
+    const contexto = await iniciarContexto();
+    try {
+      const cliente = contexto.novoCliente();
+      await cliente.post("/api/login", ADMIN, { origin: "https://site-malicioso.example" });
+
+      const resposta = await cliente.post(
+        "/api/produtos",
+        { nome: "Injetado", preco: 1, quantidade: 1, categoriaId: "cat-outros" },
+        { origin: "https://site-malicioso.example" },
+      );
+      expect(resposta.status).toBe(403);
+      expect(resposta.corpo.erro).toMatch(/origem/i);
+    } finally {
+      await contexto.encerrar();
+    }
+  });
+
+  it("aceita escrita da origem local", async () => {
+    const contexto = await iniciarContexto();
+    try {
+      const cliente = contexto.novoCliente();
+      await cliente.post("/api/login", ADMIN, { origin: "http://localhost:5173" });
+
+      const resposta = await cliente.post(
+        "/api/produtos",
+        { nome: "Produto legitimo", preco: 10, quantidade: 1, categoriaId: "cat-outros" },
+        { origin: "http://localhost:5173" },
+      );
+      expect(resposta.status).toBe(201);
+    } finally {
+      await contexto.encerrar();
+    }
+  });
+
+  it("aceita leitura sem Origin, para nao quebrar health check", async () => {
+    // Monitor e curl nao enviam Origin. Bloquear isso quebraria a
+    // observabilidade, que e exatamente o que precisa funcionar.
+    const contexto = await iniciarContexto();
+    try {
+      expect((await contexto.novoCliente().get("/api/produtos")).status).toBe(200);
+      const login = await contexto.novoCliente().post("/api/login", { email: "x@y.com", senha: "errada123" });
+      expect(login.status).toBe(401);
+    } finally {
+      await contexto.encerrar();
+    }
+  });
+});
+
+describe("auditoria", () => {
+  it("registra a criacao do pedido", async () => {
+    const cliente = await clienteComum();
+    const criado = await cliente.post("/api/pedidos", { itens: [{ produtoId: "prod-teclado", quantidade: 1 }] });
+    expect(criado.status).toBe(201);
+
+    const { obterPool } = await import("../postgres.js");
+    const registro = await obterPool().query<{ acao: string; usuario_id: string }>(
+      "SELECT acao, usuario_id FROM auditoria WHERE entidade = 'pedido' AND entidade_id = $1",
+      [criado.corpo.pedido.id],
+    );
+    expect(registro.rows).toHaveLength(1);
+    expect(registro.rows[0]?.acao).toBe("criado");
+    expect(registro.rows[0]?.usuario_id).toBeTruthy();
+  });
+
+  it("registra a mudanca de status com o valor anterior", async () => {
+    const cliente = await clienteComum();
+    const criado = await cliente.post("/api/pedidos", { itens: [{ produtoId: "prod-mouse", quantidade: 1 }] });
+    const id = criado.corpo.pedido.id;
+
+    const admin = novo();
+    await admin.post("/api/login", ADMIN);
+    expect((await admin.patch(`/api/admin/pedidos/${id}`, { status: "enviado" })).status).toBe(200);
+
+    const { obterPool } = await import("../postgres.js");
+    const registro = await obterPool().query<{ antes: { status: string }; depois: { status: string } }>(
+      "SELECT antes, depois FROM auditoria WHERE entidade_id = $1 AND acao = 'status_alterado'",
+      [id],
+    );
+    // Guardar so o valor novo nao permitiria reconstruir a transicao.
+    expect(registro.rows[0]?.antes.status).toBe("processando");
+    expect(registro.rows[0]?.depois.status).toBe("enviado");
+  });
+
+  it("so o admin le a auditoria", async () => {
+    const cliente = await clienteComum();
+    expect((await cliente.get("/api/admin/pedidos/qualquer/auditoria")).status).toBe(403);
   });
 });
 
