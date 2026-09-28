@@ -23,6 +23,21 @@ let pool: Pool | null = null;
 export function obterPool(): Pool {
   if (pool) return pool;
 
+  // Trava de segurança. Em teste, o `search_path` precisa apontar para um
+  // schema isolado, definido em `src/testes/preparacao.ts`. Se o arquivo for
+  // rodado fora do Vitest — por exemplo `npx vitest` a partir da raiz, onde
+  // o `vitest.config.ts` do api não é carregado — o setup não roda, o schema
+  // não é definido, e a suíte grava no banco de desenvolvimento sem aviso.
+  //
+  // Preferível falhar na inicialização a silenciosamente poluir o `public`.
+  if (process.env.NODE_ENV === "test" && !process.env.DATABASE_SCHEMA) {
+    throw new Error(
+      "DATABASE_SCHEMA não definida em ambiente de teste. Rode a suíte com `npm test` na raiz, " +
+        "que executa `vitest` dentro de apps/api e carrega o vitest.config.ts certo. " +
+        "Rodar `npx vitest` na raiz escreveria no banco de desenvolvimento.",
+    );
+  }
+
   // `ambiente` vem de config.ts, que é quem carrega o dotenv. Ler process.env
   // aqui direto veria um ambiente vazio, porque o ESM avalia os imports antes
   // do corpo de quem importa.
