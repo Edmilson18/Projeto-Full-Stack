@@ -1,25 +1,20 @@
 import { useEffect, useMemo, useState } from "react";
 import { Eye, EyeOff, Heart, LogIn, LogOut, Moon, ShoppingBag, Sun, UserRound } from "lucide-react";
+import type { AvaliacaoResponse, Conta, ProdutoResponse, UsuarioPublico } from "@loja/shared";
 
-type Produto = {
-  id: string;
-  nome: string;
-  descricao: string;
-  preco: number;
-  quantidade: number;
-  categoria: string;
-  imagem?: string;
-};
-
-type UsuarioSessao = {
-  id: string;
-  nome: string;
-  email: string;
-  role: "admin" | "cliente";
-};
+// Os tipos vêm de `@loja/shared`, que é o mesmo arquivo que o servidor valida
+// na saída. Antes eram declarados aqui, em três lugares diferentes do projeto,
+// e divergiam do que a API devolvia — daí o `String(pedido.status)` no JSX:
+// o compilador não sabia o tipo, então o autor chutava.
+//
+// A diferença para o tipo local antigo: `descricao`, `categoria` e `imagem` são
+// anuláveis, porque é isso que o banco devolve. Aceitar `null` é mais honesto
+// que afirmar `string` e tomar `undefined` em runtime.
+type Produto = ProdutoResponse;
+type UsuarioSessao = UsuarioPublico;
+type Avaliacao = AvaliacaoResponse;
 
 type ItemCarrinho = Produto & { quantidadeCarrinho: number };
-type Avaliacao = { nota: number; comentario: string; criado_em: string; nome: string };
 
 const imagensPadrao = [
   "https://images.unsplash.com/photo-1518770660439-4636190af475?auto=format&fit=crop&w=900&q=80",
@@ -32,6 +27,17 @@ const imagensPadrao = [
 
 const formatarMoeda = (valor: number) =>
   new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(valor);
+
+/**
+ * Imagem de um produto, com reserva quando não há.
+ *
+ * A API devolve `imagem` como `null` quando o produto não tem foto, e
+ * `<img src={null}>` renderiza `src="null"`, o que dispara requisição inválida
+ * e imagem quebrada. O tipo do schema deixou isso explícito; aqui vira um
+ * fallback determinístico.
+ */
+const imagemDe = (produto: Produto, indice = 0): string =>
+  produto.imagem ?? imagensPadrao[indice % imagensPadrao.length] ?? imagensPadrao[0]!;
 
 export default function App() {
   const [produtos, setProdutos] = useState<Produto[]>([]);
@@ -81,11 +87,10 @@ export default function App() {
     metodo: string;
   } | null>(null);
   const [contaAberta, setContaAberta] = useState(false);
-  const [dadosConta, setDadosConta] = useState<{
-    perfil: Record<string, string>;
-    pedidos: Array<Record<string, unknown>>;
-    favoritos: Produto[];
-  } | null>(null);
+  // O tipo vem do mesmo schema que o servidor valida na resposta, então
+  // `pedido.status` é a união dos quatro valores reais e o JSX abaixo não
+  // precisa de `String()` nem de `as Record<string, unknown>`.
+  const [dadosConta, setDadosConta] = useState<Conta | null>(null);
   const [favoritos, setFavoritos] = useState<string[]>(() => JSON.parse(localStorage.getItem("favoritosLoja") || "[]"));
   const [recentes, setRecentes] = useState<Produto[]>(() => JSON.parse(localStorage.getItem("recentesLoja") || "[]"));
   const [metodoPagamento, setMetodoPagamento] = useState("pix");
@@ -853,7 +858,7 @@ export default function App() {
         <section className="showcase-grid">
           {grupos.destaque.map((produto) => (
             <article key={produto.id} className="product-card featured" onClick={() => abrirProduto(produto)}>
-              <img src={produto.imagem} alt={produto.nome} />
+              <img src={imagemDe(produto)} alt={produto.nome} />
               <div className="product-body">
                 <span className="tag">{produto.categoria}</span>
                 <h4>{produto.nome}</h4>
@@ -919,7 +924,7 @@ export default function App() {
           <section className="catalog-grid">
             {produtosFiltrados.map((produto) => (
               <article key={produto.id} className="product-card" onClick={() => abrirProduto(produto)}>
-                <img src={produto.imagem} alt={produto.nome} />
+                <img src={imagemDe(produto)} alt={produto.nome} />
                 <div className="product-body">
                   <span className="tag">{produto.categoria}</span>
                   <h4>{produto.nome}</h4>
@@ -984,7 +989,7 @@ export default function App() {
             <div className="showcase-grid">
               {recentes.map((produto) => (
                 <article key={produto.id} className="product-card compact" onClick={() => abrirProduto(produto)}>
-                  <img src={produto.imagem} alt={produto.nome} />
+                  <img src={imagemDe(produto)} alt={produto.nome} />
                   <div className="product-body">
                     <h4>{produto.nome}</h4>
                     <strong>{formatarMoeda(produto.preco)}</strong>
@@ -1025,7 +1030,7 @@ export default function App() {
                 <div className="cart-items">
                   {carrinho.map((item) => (
                     <div className="cart-item" key={item.id}>
-                      <img src={item.imagem} alt={item.nome} />
+                      <img src={imagemDe(item)} alt={item.nome} />
                       <div className="cart-item-info">
                         <strong>{item.nome}</strong>
                         <span>{formatarMoeda(item.preco)}</span>
@@ -1132,7 +1137,7 @@ export default function App() {
               ×
             </button>
             <div className="modal-grid">
-              <img src={produtoSelecionado.imagem} alt={produtoSelecionado.nome} />
+              <img src={imagemDe(produtoSelecionado)} alt={produtoSelecionado.nome} />
               <div>
                 <span className="tag">{produtoSelecionado.categoria}</span>
                 <h3>{produtoSelecionado.nome}</h3>
@@ -1234,20 +1239,18 @@ export default function App() {
                     <div className="order-list">
                       {dadosConta.pedidos.map((pedido) => (
                         <article key={String(pedido.id)} className="order-card">
-                          <strong>#{String(pedido.id).slice(0, 8)}</strong>
-                          <span>{String(pedido.status)}</span>
-                          <b>{formatarMoeda(Number(pedido.total_final))}</b>
+                          <strong>#{pedido.id.slice(0, 8)}</strong>
+                          <span>{pedido.status}</span>
+                          <b>{formatarMoeda(pedido.total_final)}</b>
                           <small>
-                            {String(pedido.metodo_pagamento ?? "pix").toUpperCase()} ·{" "}
-                            {String(pedido.status_pagamento ?? "pendente")}
+                            {(pedido.metodo_pagamento ?? "pix").toUpperCase()} · {pedido.status_pagamento ?? "pendente"}
                           </small>
                           <div>
-                            {Array.isArray(pedido.itens) &&
-                              pedido.itens.map((item: Record<string, unknown>) => (
-                                <p key={String(item.produto_id)}>
-                                  {Number(item.quantidade)}× {String(item.nome)}
-                                </p>
-                              ))}
+                            {pedido.itens?.map((item) => (
+                              <p key={item.produto_id}>
+                                {item.quantidade}× {item.nome}
+                              </p>
+                            ))}
                           </div>
                         </article>
                       ))}

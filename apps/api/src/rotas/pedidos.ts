@@ -1,5 +1,16 @@
 import type { FastifyInstance } from "fastify";
-import { cupomInvalido, cupomValidado, pedidoInput, statusPedido, metodoPagamento } from "@loja/shared";
+import {
+  cupomInvalido,
+  cupomValidado,
+  dashboard as dashboardSchema,
+  listaAuditoria,
+  listaPedidosAdmin,
+  mensagem,
+  pedidoCriado,
+  pedidoInput,
+  statusPedido,
+  metodoPagamento,
+} from "@loja/shared";
 import {
   criarPedido,
   listarDashboard,
@@ -38,7 +49,7 @@ export async function registrarRotasPedidos(app: FastifyInstance) {
     });
 
     reply.code(201);
-    return { pedido };
+    return { pedido: pedidoCriado.parse(pedido) };
   });
 
   app.post("/api/cupons/validar", async (req) => {
@@ -57,12 +68,14 @@ export async function registrarRotasPedidos(app: FastifyInstance) {
 
   app.get("/api/dashboard", async (req) => {
     await exigirAdmin(req);
-    return listarDashboard();
+    // Validar a saída é o que impede um campo renomeado de chegar como
+    // `undefined` no gráfico do painel, onde viraria `NaN` sem aviso.
+    return dashboardSchema.parse(await listarDashboard());
   });
 
   app.get("/api/admin/pedidos", async (req) => {
     await exigirAdmin(req);
-    return listarPedidosAdmin();
+    return listaPedidosAdmin.parse(await listarPedidosAdmin());
   });
 
   app.patch("/api/admin/pedidos/:id", async (req) => {
@@ -94,12 +107,12 @@ export async function registrarRotasPedidos(app: FastifyInstance) {
       usuarioId: usuario.id,
     });
 
-    return { mensagem: "Status atualizado." };
+    return mensagem.parse({ mensagem: "Status atualizado." });
   });
 
   app.get("/api/admin/pedidos/:id/auditoria", async (req) => {
     await exigirAdmin(req);
-    return listarAuditoria("pedido", (req.params as { id: string }).id);
+    return listaAuditoria.parse(await listarAuditoria("pedido", (req.params as { id: string }).id));
   });
 }
 

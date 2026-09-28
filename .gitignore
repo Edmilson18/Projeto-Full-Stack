@@ -3,6 +3,8 @@ build/
 dist/
 coverage/
 *.tsbuildinfo
+packages/*/dist/
+apps/*/dist/
 
 # Banco local. O schema versionado esta em database/schema.sql.
 database/*.db
