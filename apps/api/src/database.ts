@@ -3,6 +3,20 @@ import type { PoolClient } from "pg";
 import { emTransacao, obterPool } from "./postgres.js";
 import { aplicarMigracoes } from "./postgres.js";
 
+/**
+ * Converte `Date` em string ISO.
+ *
+ * O driver `pg` devolve `TIMESTAMPTZ` como objeto `Date`, que só vira string
+ * quando o `JSON.stringify` passa por ele. Deixar o `Date` vazar para dentro
+ * da aplicação faz o tipo(valor) depender da serialização, e a validação da
+ * resposta — que roda antes dela — receberia um `Date` onde o schema espera
+ * string. Converter aqui deixa o contrato correto em qualquer camada.
+ */
+function iso(valor: Date | string | null | undefined): string | null {
+  if (valor === null || valor === undefined) return null;
+  return valor instanceof Date ? valor.toISOString() : String(valor);
+}
+
 // ── Autenticação ───────────────────────────────────────────────────────────
 
 /**
@@ -173,7 +187,7 @@ export async function listarAuditoria(entidade: string, entidadeId: string) {
      LIMIT 50`,
     [entidade, entidadeId],
   );
-  return resultado.rows;
+  return resultado.rows.map((linha) => ({ ...linha, criado_em: iso(linha.criado_em) }));
 }
 
 // ── Usuários ───────────────────────────────────────────────────────────────
@@ -232,7 +246,8 @@ export async function buscarPerfilUsuario(id: string) {
     "SELECT id, nome, email, role, cep, rua, numero, complemento, bairro, cidade, estado, criado_em FROM usuarios WHERE id = $1",
     [id],
   );
-  return resultado.rows[0];
+  const linha = resultado.rows[0];
+  return linha ? { ...linha, criado_em: iso(linha.criado_em) } : undefined;
 }
 
 export function atualizarEnderecoUsuario(id: string, endereco: Record<string, string>) {
@@ -582,6 +597,7 @@ export async function listarPedidosDoUsuario(usuarioId: string) {
 
   return pedidos.rows.map((linha) => ({
     ...linha,
+    criado_em: iso(linha.criado_em),
     subtotal: linha.subtotal_centavos / 100,
     desconto: linha.desconto_centavos / 100,
     frete: linha.frete_centavos / 100,
@@ -605,7 +621,11 @@ export async function listarPedidosAdmin() {
      LEFT JOIN usuarios u ON u.id = p.usuario_id
      ORDER BY p.criado_em DESC`,
   );
-  return resultado.rows.map((linha) => ({ ...linha, total_final: linha.total_centavos / 100 }));
+  return resultado.rows.map((linha) => ({
+    ...linha,
+    criado_em: iso(linha.criado_em),
+    total_final: linha.total_centavos / 100,
+  }));
 }
 
 export async function atualizarStatusPedido(id: string, status: string) {
@@ -705,7 +725,11 @@ export async function listarDashboard() {
     totalVendas,
     ticketMedio: ticket,
     produtosVendidos: Number(maisVendidos.rows.reduce((soma, linha) => soma + linha.vendidos, 0)),
-    vendasRecentes: recentes.rows.map((linha) => ({ ...linha, valor: Number(linha.total_centavos) / 100 })),
+    vendasRecentes: recentes.rows.map((linha) => ({
+      ...linha,
+      criado_em: iso(linha.criado_em),
+      valor: Number(linha.total_centavos) / 100,
+    })),
     vendasPorDia: porDia.rows.map((linha) => ({ dia: linha.dia, total: Number(linha.total) / 100 })),
     vendasPorCategoria: porCategoria.rows,
     pedidosPorStatus: Object.fromEntries(porStatus.rows.map((linha) => [linha.status, linha.total])),
@@ -749,7 +773,7 @@ export async function listarAvaliacoes(produtoId: string) {
      WHERE a.produto_id = $1 ORDER BY a.criado_em DESC`,
     [produtoId],
   );
-  return resultado.rows;
+  return resultado.rows.map((linha) => ({ ...linha, criado_em: iso(linha.criado_em) }));
 }
 
 export async function salvarAvaliacao(usuarioId: string, produtoId: string, nota: number, comentario: string) {

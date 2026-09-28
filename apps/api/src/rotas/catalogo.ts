@@ -1,5 +1,14 @@
 import type { FastifyInstance } from "fastify";
-import { produtoInput, CAMPOS_ENDERECO, enderecoInput } from "@loja/shared";
+import {
+  CAMPOS_ENDERECO,
+  enderecoInput,
+  listaAvaliacoes,
+  listaCategorias,
+  listaCupons,
+  listaProdutos,
+  produtoInput,
+  conta,
+} from "@loja/shared";
 import {
   alternarFavorito,
   buscarPerfilUsuario,
@@ -22,33 +31,49 @@ import { randomUUID } from "node:crypto";
 
 export async function registrarRotasCatalogo(app: FastifyInstance) {
   // ── Leitura pública ──────────────────────────────────────────────────────
+  //
+  // Cada rota valida a própria saída. Sem isso, um campo renomeado no banco
+  // chegaria como `undefined` na tela sem nenhum sinal, e o `String(x)` do
+  // frontend mascararia o problema.
 
-  app.get("/api/produtos", async () => listarProdutos());
+  app.get("/api/produtos", async () => listaProdutos.parse(await listarProdutos()));
 
-  app.get("/api/produtos/mais-vendidos", async () => listarMaisVendidos());
+  app.get("/api/produtos/mais-vendidos", async () => {
+    const linhas = await listarMaisVendidos();
+    return linhas.map((linha) => ({ ...linha, vendidos: Number(linha.vendidos) }));
+  });
 
-  app.get("/api/categorias", async () => listarCategorias());
+  app.get("/api/categorias", async () => listaCategorias.parse(await listarCategorias()));
 
   app.get("/api/cupons", async () =>
-    (await listarCuponsAtivos()).map((cupom) => ({
-      codigo: cupom.codigo,
-      tipoDesconto: cupom.tipo_desconto,
-      porcentagemDesconto: Number(cupom.porcentagem_desconto ?? 0),
-      valorMinimo: Number(cupom.valor_minimo ?? 0),
-    })),
+    listaCupons.parse(
+      (await listarCuponsAtivos()).map((cupom) => ({
+        codigo: cupom.codigo,
+        tipoDesconto: cupom.tipo_desconto,
+        porcentagemDesconto: Number(cupom.porcentagem_desconto ?? 0),
+        valorMinimo: Number(cupom.valor_minimo_centavos ?? 0) / 100,
+      })),
+    ),
   );
 
-  app.get("/api/avaliacoes/:id", async (req) => listarAvaliacoes((req.params as { id: string }).id));
+  app.get("/api/avaliacoes/:id", async (req) =>
+    listaAvaliacoes.parse(await listarAvaliacoes((req.params as { id: string }).id)),
+  );
 
   // ── Conta ────────────────────────────────────────────────────────────────
 
   app.get("/api/conta", async (req) => {
     const usuario = await exigirSessao(req);
-    return {
+    return conta.parse({
       perfil: await buscarPerfilUsuario(usuario.id),
       pedidos: await listarPedidosDoUsuario(usuario.id),
-      favoritos: await listarFavoritos(usuario.id),
-    };
+      favoritos: (await listarFavoritos(usuario.id)).map((linha) => ({
+        ...linha,
+        preco: Number(linha.preco ?? 0),
+        descricao: linha.descricao ?? "",
+        imagem: linha.imagem ?? null,
+      })),
+    });
   });
 
   app.put("/api/conta/endereco", async (req) => {
