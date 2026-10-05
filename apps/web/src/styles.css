@@ -1378,8 +1378,14 @@ nav a {
   }
 }
 
+/* Os quatro botões da barra lateral. O `account-toggle` entra aqui porque
+   antes vivia numa regra agrupada com o `favorite-btn` do card de produto: a
+   troca para seletores escopados em `.product-card` levou o estilo junto e o
+   botão da conta ficou sem borda, sem fundo e sem centralizar o ícone. */
 .theme-toggle,
-.cart-toggle {
+.cart-toggle,
+.account-toggle,
+.logout-btn {
   border: 1px solid var(--line);
   background: var(--paper);
   color: var(--ink);
@@ -1456,13 +1462,9 @@ nav a {
   width: 36px;
   height: 36px;
   padding: 0;
-  border: 1px solid var(--line);
-  background: rgba(255, 255, 255, 0.12);
-  color: var(--ink);
   border-radius: 50%;
   font-size: 1.15rem;
   line-height: 1;
-  font-weight: 700;
 }
 .logout-btn:hover {
   background: var(--ink);
@@ -1630,10 +1632,14 @@ nav a {
   opacity: 0.65;
   transform: none;
 }
-.account-toggle {
-  gap: 6px;
-  font: inherit;
-  font-size: 0.82rem;
+/* Ícone de conta logado: quadrado redondo, igual ao tema e ao sair. */
+.account-toggle:not(.login-toggle) {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border-radius: 50%;
+  display: inline-grid;
+  place-items: center;
 }
 .recent-section {
   margin-top: 42px;
