@@ -1,16 +1,20 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
+const API_URL = process.env.VITE_API_URL ?? "http://localhost:3000";
+
 export default defineConfig({
   plugins: [react()],
   server: {
     port: 5173,
+    strictPort: true,
     host: "0.0.0.0",
     proxy: {
-      // A API sobe em outro processo, na porta 3000.
+      // A API sobe em outro processo. A URL pode ser configurada via VITE_API_URL.
       "/api": {
-        target: "http://localhost:3000",
+        target: API_URL,
         changeOrigin: true,
+        cookieDomainRewrite: "localhost",
       },
     },
   },

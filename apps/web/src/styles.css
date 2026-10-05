@@ -437,6 +437,14 @@ footer {
 .side-panel h2 {
   margin-bottom: 30px;
 }
+.cart-actions-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--line);
+}
 .cart-items {
   display: grid;
   gap: 16px;
@@ -1008,6 +1016,71 @@ nav a {
   cursor: pointer;
 }
 
+.product-card .card-bottom {
+  margin-top: 18px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  min-height: 40px;
+}
+
+.product-card .card-bottom strong {
+  font-size: 1.2rem;
+  display: flex;
+  align-items: center;
+  height: 40px;
+}
+
+.product-card .card-bottom .card-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.product-card .card-bottom .card-actions .small-btn {
+  height: 40px;
+  padding: 0 1rem;
+  border-radius: 10px;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+  color: white;
+  border: none;
+  cursor: pointer;
+  transition:
+    transform 0.2s ease,
+    opacity 0.2s ease;
+}
+
+.product-card .card-bottom .card-actions .small-btn:hover {
+  transform: translateY(-1px);
+}
+
+.product-card .card-bottom .card-actions .favorite-btn {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+  transition:
+    transform 0.2s ease,
+    opacity 0.2s ease;
+}
+
+.product-card .card-bottom .card-actions .favorite-btn:hover {
+  transform: translateY(-1px);
+}
+
 .product-card:hover {
   transform: translateY(-4px);
 }
@@ -1041,21 +1114,6 @@ nav a {
   color: var(--muted);
   line-height: 1.6;
   min-height: 72px;
-}
-
-.card-bottom {
-  margin-top: 18px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.card-bottom strong {
-  font-size: 1.2rem;
-}
-
-.small-btn {
-  padding: 0.75rem 1rem;
 }
 
 .info-grid {
@@ -1160,6 +1218,75 @@ nav a {
   place-items: center;
   padding: 20px;
   z-index: 50;
+}
+.login-prompt-modal {
+  width: min(420px, 100%);
+  background: var(--paper);
+  color: var(--ink);
+  border-radius: 20px;
+  padding: 34px;
+  text-align: center;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.28);
+}
+.login-prompt-icon {
+  display: grid;
+  place-items: center;
+  width: 54px;
+  height: 54px;
+  margin: 0 auto 18px;
+  border-radius: 50%;
+  background: var(--lime);
+  color: #101820;
+}
+.login-prompt-modal h3 {
+  font-size: 1.35rem;
+  letter-spacing: -0.035em;
+}
+.login-prompt-modal p {
+  margin-top: 9px;
+  color: var(--muted);
+  font-size: 0.85rem;
+  line-height: 1.6;
+}
+.login-prompt-actions {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 25px;
+}
+.login-prompt-actions .primary-btn,
+.login-prompt-actions .secondary-btn {
+  margin-top: 0;
+}
+.login-prompt-actions .primary-btn {
+  background: var(--ink);
+  color: var(--white);
+  border: 2px solid var(--ink);
+}
+.login-prompt-actions .primary-btn:hover {
+  background: #303c4a;
+  border-color: #303c4a;
+  color: var(--white);
+}
+[data-tema="escuro"] .login-prompt-actions .primary-btn {
+  background: var(--lime);
+  color: #101820;
+  border-color: var(--lime);
+}
+[data-tema="escuro"] .login-prompt-actions .primary-btn:hover {
+  background: #a9d847;
+  border-color: #a9d847;
+  color: #101820;
+}
+[data-tema="escuro"] .login-prompt-actions .primary-btn {
+  background: var(--lime);
+  color: #101820;
+  border-color: var(--lime);
+}
+[data-tema="escuro"] .login-prompt-actions .primary-btn:hover {
+  background: #a9d847;
+  border-color: #a9d847;
+  color: #101820;
 }
 
 .modal {
@@ -1388,6 +1515,14 @@ nav a {
   line-height: 1.7;
   padding: 50px 0;
 }
+.cart-actions-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--line);
+}
 .cart-items {
   display: grid;
   gap: 16px;
@@ -1397,16 +1532,19 @@ nav a {
   gap: 14px;
   padding-bottom: 16px;
   border-bottom: 1px solid var(--line);
+  align-items: flex-start;
 }
 .cart-item img {
   width: 76px;
   height: 76px;
   object-fit: cover;
+  border-radius: 8px;
 }
 .cart-item-info {
   display: grid;
   gap: 6px;
   align-content: start;
+  flex: 1;
 }
 .cart-item-info strong {
   font-size: 0.9rem;
@@ -1414,6 +1552,30 @@ nav a {
 .cart-item-info span {
   color: var(--muted);
   font-size: 0.82rem;
+}
+.cart-checkbox {
+  width: 18px;
+  height: 18px;
+  margin-top: 2px;
+  cursor: pointer;
+  accent-color: var(--primary);
+  flex-shrink: 0;
+}
+.remove-item-btn {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.remove-item-btn:hover {
+  color: #c0392b;
+  background: rgba(192, 57, 43, 0.1);
 }
 .quantity-controls {
   display: flex;
@@ -1467,26 +1629,6 @@ nav a {
   cursor: wait;
   opacity: 0.65;
   transform: none;
-}
-.card-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.favorite-btn,
-.account-toggle {
-  display: inline-grid;
-  place-items: center;
-  border: 0;
-  background: transparent;
-  color: var(--ink);
-  cursor: pointer;
-}
-.favorite-btn {
-  width: 34px;
-  height: 34px;
-  border: 1px solid var(--border);
-  border-radius: 50%;
 }
 .account-toggle {
   gap: 6px;
@@ -1620,6 +1762,137 @@ nav a {
 .address-form .primary-btn {
   grid-column: 1 / -1;
   justify-content: center;
+}
+
+/* ── Favoritos no modal da conta ──────────────────────────────────────────
+   A coluna direita é estreita (0.85fr), então os favoritos viram lista
+   vertical e não grid: um card por linha usa a largura toda, e o nome do
+   produto cabe em uma linha com o preço logo abaixo. */
+.favorites-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.favorites-count {
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: var(--lime);
+  color: var(--ink);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+.fav-list {
+  list-style: none;
+  display: grid;
+  gap: 10px;
+}
+/* O `li` é a linha; dentro dele a área que abre o produto e o botão de remover
+   são irmãos, porque um `<button>` dentro de outro não é válido e o clique no
+   remover acabaria abrindo o produto. */
+.fav-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel);
+  transition:
+    border-color 0.2s ease,
+    transform 0.2s ease;
+}
+.fav-item:hover {
+  border-color: var(--ink);
+  transform: translateY(-1px);
+}
+.fav-abrir {
+  display: grid;
+  grid-template-columns: 52px 1fr;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 8px;
+}
+.fav-abrir:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 3px;
+}
+.fav-abrir img {
+  width: 52px;
+  height: 52px;
+  border-radius: 8px;
+  object-fit: cover;
+  background: var(--paper);
+}
+.fav-abrir:hover .fav-info strong {
+  text-decoration: underline;
+}
+.fav-info {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.fav-info strong {
+  font-size: 0.88rem;
+  line-height: 1.3;
+}
+.fav-info > span {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+.fav-tag {
+  justify-self: start;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 0.66rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.fav-tag.pouco-estoque {
+  background: rgba(242, 107, 84, 0.14);
+  color: var(--coral);
+}
+.fav-tag.sem-estoque {
+  background: rgba(23, 32, 43, 0.08);
+  color: var(--muted);
+}
+.fav-remover {
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  color: var(--coral);
+  transition:
+    background 0.2s ease,
+    color 0.2s ease,
+    transform 0.2s ease;
+}
+.fav-remover:hover {
+  background: var(--coral);
+  color: var(--white);
+  transform: translateY(-1px);
+}
+.fav-vazio {
+  padding: 16px;
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  color: var(--muted);
+  font-size: 0.84rem;
+  text-align: center;
 }
 @media (max-width: 760px) {
   .account-grid {
@@ -1972,12 +2245,25 @@ nav a {
   cursor: pointer;
 }
 .text-btn {
-  margin-top: 14px;
+  margin-top: 0;
   border: 0;
   background: transparent;
   color: var(--primary);
   font-weight: 700;
   cursor: pointer;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 0.82rem;
+  transition: background 0.2s ease;
+}
+.text-btn:hover {
+  background: rgba(41, 98, 255, 0.08);
+}
+.text-btn.danger {
+  color: #c0392b;
+}
+.text-btn.danger:hover {
+  background: rgba(192, 57, 43, 0.08);
 }
 .guest-access {
   display: block;
