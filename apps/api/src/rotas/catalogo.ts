@@ -6,12 +6,22 @@ import {
   listaCategorias,
   listaCupons,
   listaProdutos,
+  produtoCriadoResponse,
   produtoInput,
   conta,
+  avaliacaoInput,
+  avaliacaoCriadaResponse,
+  favoritoResponse,
+  mensagem,
+  maisVendido,
+  enderecoSalvoResponse,
 } from "@loja/shared";
 import {
-  alternarFavorito,
+  desfavoritarProduto,
+  favoritarProduto,
   buscarPerfilUsuario,
+  buscarProduto,
+  categoriaExiste,
   inativarProduto,
   inserirProduto,
   listarAvaliacoes,
@@ -21,6 +31,7 @@ import {
   listarMaisVendidos,
   listarPedidosDoUsuario,
   listarProdutos,
+  produtoExiste,
   salvarAvaliacao,
   atualizarEnderecoUsuario,
   atualizarProduto,
@@ -28,6 +39,20 @@ import {
 import { ErroApp } from "../erros.js";
 import { exigirAdmin, exigirSessao } from "./auth.js";
 import { randomUUID } from "node:crypto";
+
+/**
+ * `favoritos` e `avaliacoes` têm chave estrangeira para `produtos`. Sem esta
+ * checagem, um id inexistente deixaria o banco recusar a escrita e a rota
+ * viraria 500, como se a falha fosse de infraestrutura em vez de entrada
+ * inválida.
+ *
+ * No escopo do módulo porque não captura nada do escopo da função de registro:
+ * dentro dela a função seria recriada a cada chamada.
+ */
+async function exigirProdutoExistente(produtoId: string) {
+  if (!(await produtoExiste(produtoId))) throw ErroApp.naoEncontrado("Produto não encontrado.");
+  return produtoId;
+}
 
 export async function registrarRotasCatalogo(app: FastifyInstance) {
   // ── Leitura pública ──────────────────────────────────────────────────────
@@ -40,7 +65,7 @@ export async function registrarRotasCatalogo(app: FastifyInstance) {
 
   app.get("/api/produtos/mais-vendidos", async () => {
     const linhas = await listarMaisVendidos();
-    return linhas.map((linha) => ({ ...linha, vendidos: Number(linha.vendidos) }));
+    return linhas.map((linha) => maisVendido.parse({ ...linha, vendidos: Number(linha.vendidos) }));
   });
 
   app.get("/api/categorias", async () => listaCategorias.parse(await listarCategorias()));
@@ -86,40 +111,55 @@ export async function registrarRotasCatalogo(app: FastifyInstance) {
       usuario.id,
       Object.fromEntries(CAMPOS_ENDERECO.map((campo) => [campo, entrada[campo]])),
     );
-    return { perfil: await buscarPerfilUsuario(usuario.id) };
+    return enderecoSalvoResponse.parse({ perfil: await buscarPerfilUsuario(usuario.id) });
   });
 
-  app.post("/api/favoritos/:id", async (req) => {
+  // Estado desejado em vez de "alternar": as duas rotas são idempotentes, e
+  // repetir a mesma chamada não inverte o favorito. Ver `favoritarProduto`.
+  app.put("/api/favoritos/:id", async (req) => {
     const usuario = await exigirSessao(req);
-    return { favorito: await alternarFavorito(usuario.id, (req.params as { id: string }).id) };
+    const produtoId = await exigirProdutoExistente((req.params as { id: string }).id);
+
+    return favoritoResponse.parse({ favorito: await favoritarProduto(usuario.id, produtoId) });
+  });
+
+  app.delete("/api/favoritos/:id", async (req) => {
+    const usuario = await exigirSessao(req);
+    const produtoId = await exigirProdutoExistente((req.params as { id: string }).id);
+
+    return favoritoResponse.parse({ favorito: await desfavoritarProduto(usuario.id, produtoId) });
   });
 
   app.post("/api/avaliacoes/:id", async (req, reply) => {
     const usuario = await exigirSessao(req);
-    const { nota, comentario } = req.body as { nota?: unknown; comentario?: unknown };
+    const entrada = avaliacaoInput.parse(req.body);
+    const produtoId = (req.params as { id: string }).id;
 
-    const notaNumero = Number(nota);
-    if (!Number.isInteger(notaNumero) || notaNumero < 1 || notaNumero > 5) {
-      throw ErroApp.badRequest("A nota deve ser um inteiro de 1 a 5.");
-    }
-    const texto = String(comentario ?? "").trim();
-    if (texto.length > 600) throw ErroApp.badRequest("O comentário pode ter no máximo 600 caracteres.");
+    // Mesma razão do favorito: `avaliacoes.produto_id` é chave estrangeira.
+    await exigirProdutoExistente(produtoId);
 
-    await salvarAvaliacao(usuario.id, (req.params as { id: string }).id, notaNumero, texto);
+    await salvarAvaliacao(usuario.id, produtoId, entrada.nota, entrada.comentario);
     reply.code(201);
-    return { mensagem: "Avaliação registrada." };
+    return avaliacaoCriadaResponse.parse({ mensagem: "Avaliação registrada." });
   });
 
   // ── Administração ────────────────────────────────────────────────────────
 
   app.get("/api/admin/produtos", async (req) => {
     await exigirAdmin(req);
-    return listarProdutos(true);
+    return listaProdutos.parse(await listarProdutos(true));
   });
 
   app.post("/api/produtos", async (req, reply) => {
     await exigirAdmin(req);
     const entrada = produtoInput.parse(req.body);
+
+    // `categoriaId` é uma chave estrangeira: sem esta checagem, uma categoria
+    // inexistente deixava o banco recusar a inserção e a rota respondia 500,
+    // como se a falha fosse de infraestrutura em vez de entrada inválida.
+    if (!(await categoriaExiste(entrada.categoriaId))) {
+      throw ErroApp.badRequest("Categoria inexistente.");
+    }
 
     const produto = {
       id: randomUUID(),
@@ -132,16 +172,28 @@ export async function registrarRotasCatalogo(app: FastifyInstance) {
     };
 
     await inserirProduto(produto);
+
+    // Relê o produto para devolver o `categoria` (que é o nome, não o id) e o
+    // preço em reais, no mesmo formato da listagem.
+    const criado = await buscarProduto(produto.id);
+    if (!criado) throw ErroApp.naoEncontrado("Produto não encontrado após a criação.");
+
     reply.code(201);
-    return { mensagem: "Produto cadastrado com sucesso.", produto };
+    return produtoCriadoResponse.parse({ mensagem: "Produto cadastrado com sucesso.", produto: criado });
   });
 
   app.put("/api/produtos/:id", async (req) => {
     await exigirAdmin(req);
     const entrada = produtoInput.parse(req.body);
     const { ativo } = (req.body ?? {}) as { ativo?: unknown };
+    const id = (req.params as { id: string }).id;
 
-    atualizarProduto((req.params as { id: string }).id, {
+    if (!(await categoriaExiste(entrada.categoriaId))) {
+      throw ErroApp.badRequest("Categoria inexistente.");
+    }
+    if (!(await produtoExiste(id))) throw ErroApp.naoEncontrado("Produto não encontrado.");
+
+    await atualizarProduto(id, {
       nome: entrada.nome,
       descricao: entrada.descricao,
       preco: entrada.preco,
@@ -151,12 +203,18 @@ export async function registrarRotasCatalogo(app: FastifyInstance) {
       ativo: ativo !== false,
     });
 
-    return { mensagem: "Produto atualizado." };
+    return mensagem.parse({ mensagem: "Produto atualizado." });
   });
 
   app.delete("/api/produtos/:id", async (req) => {
     await exigirAdmin(req);
-    await inativarProduto((req.params as { id: string }).id);
-    return { mensagem: "Produto inativado." };
+    const id = (req.params as { id: string }).id;
+
+    // Antes respondia 200 com "inativado" para um id que não existe, o que
+    // fazia o cliente acreditar que a ação aconteceu.
+    if (!(await produtoExiste(id))) throw ErroApp.naoEncontrado("Produto não encontrado.");
+
+    await inativarProduto(id);
+    return mensagem.parse({ mensagem: "Produto inativado." });
   });
 }

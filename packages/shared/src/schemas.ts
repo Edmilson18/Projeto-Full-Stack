@@ -177,7 +177,8 @@ export const cupomValidado = z.object({
   codigo: z.string(),
   tipoDesconto: z.string(),
   porcentagemDesconto: z.number(),
-  valorMinimo: z.number(),
+  descontoCentavos: z.number(),
+  valorMinimoCentavos: z.number(),
 });
 export type CupomValidado = z.infer<typeof cupomValidado>;
 
@@ -185,3 +186,21 @@ export const cupomInvalido = z.object({ valido: z.literal(false), erro: z.string
 
 export const resultadoCupom = z.discriminatedUnion("valido", [cupomValidado, cupomInvalido]);
 export type ResultadoCupom = z.infer<typeof resultadoCupom>;
+
+export const cupomValidarInput = z.object({
+  codigo: z.string().trim().min(1, "Informe um código de cupom."),
+});
+export type CupomValidarInput = z.infer<typeof cupomValidarInput>;
+
+// ── Avaliação ───────────────────────────────────────────────────────────────
+
+export const avaliacaoInput = z.object({
+  nota: z.number().int().min(1, "A nota deve ser um inteiro de 1 a 5.").max(5, "A nota deve ser um inteiro de 1 a 5."),
+  comentario: z.string().trim().max(600, "O comentário pode ter no máximo 600 caracteres.").default(""),
+});
+export type AvaliacaoInput = z.infer<typeof avaliacaoInput>;
+
+export const statusPedidoInput = z.object({
+  status: statusPedido,
+});
+export type StatusPedidoInput = z.infer<typeof statusPedidoInput>;

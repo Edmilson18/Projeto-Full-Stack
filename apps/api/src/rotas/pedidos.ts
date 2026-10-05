@@ -2,14 +2,14 @@ import type { FastifyInstance } from "fastify";
 import {
   cupomInvalido,
   cupomValidado,
+  cupomValidarInput,
   dashboard as dashboardSchema,
   listaAuditoria,
   listaPedidosAdmin,
   mensagem,
   pedidoCriado,
   pedidoInput,
-  statusPedido,
-  metodoPagamento,
+  statusPedidoInput,
 } from "@loja/shared";
 import {
   criarPedido,
@@ -17,7 +17,6 @@ import {
   listarPedidosAdmin,
   atualizarStatusPedido,
   listarAuditoria,
-  registrarAuditoria,
   validarCupomCodigo,
 } from "../database.js";
 import { ErroApp } from "../erros.js";
@@ -33,28 +32,21 @@ export async function registrarRotasPedidos(app: FastifyInstance) {
     // Reuso de cupom é uma operação de escrita, e Limitador simples não
     // resolve: duas requisições no mesmo instante passam. A Fase 7 traz chave
     // de idempotência.
-    let pedido;
-    try {
-      pedido = await criarPedido(usuario.id, entrada.itens, entrada.cupomCodigo, entrada.metodoPagamento);
-    } catch (erro) {
-      throw ErroApp.badRequest(erro instanceof Error ? erro.message : "Não foi possível concluir o pedido.");
-    }
-
-    await registrarAuditoria({
-      entidade: "pedido",
-      entidadeId: pedido.id,
-      acao: "criado",
-      depois: { status: pedido.status, total_final: pedido.total_final },
-      usuarioId: usuario.id,
-    });
+    //
+    // Sem `try/catch`: as regras de negócio lançam `ErroApp` e o tratador
+    // global já devolve 4xx com a mensagem. O `catch` genérico que existia
+    // convertia em 400 também o erro do banco, expondo o nome da constraint na
+    // resposta e escondendo falha de infraestrutura como se fosse erro do
+    // cliente.
+    const pedido = await criarPedido(usuario.id, entrada.itens, entrada.cupomCodigo, entrada.metodoPagamento);
 
     reply.code(201);
     return { pedido: pedidoCriado.parse(pedido) };
   });
 
   app.post("/api/cupons/validar", async (req) => {
-    const { codigo } = (req.body ?? {}) as { codigo?: unknown };
-    const texto = String(codigo ?? "").trim();
+    const { codigo } = cupomValidarInput.parse(req.body);
+    const texto = codigo.trim();
     if (!texto) throw ErroApp.badRequest("Informe um código de cupom.");
 
     const resultado = await validarCupomCodigo(texto);
@@ -80,32 +72,15 @@ export async function registrarRotasPedidos(app: FastifyInstance) {
 
   app.patch("/api/admin/pedidos/:id", async (req) => {
     const usuario = await exigirAdmin(req);
-    const { status } = (req.body ?? {}) as { status?: unknown };
+    const { status } = statusPedidoInput.parse(req.body);
+    const id = String((req.params as Record<string, unknown>).id ?? "");
 
-    // O schema garante que o status é um dos quatro conhecidos, o que antes
-    // dependia de uma lista de strings dentro de uma função do banco.
-    const novo = statusPedido.parse(status);
-    const id = (req.params as { id: string }).id;
-
-    // O estado anterior vem da própria listagem, para que a auditoria registre
-    // a transição real e não só o valor novo.
-    const anteriores = await listarPedidosAdmin();
-    const anterior = anteriores.find((pedido) => pedido.id === id);
-
-    try {
-      await atualizarStatusPedido(id, novo);
-    } catch (erro) {
-      throw ErroApp.badRequest(erro instanceof Error ? erro.message : "Não foi possível atualizar o pedido.");
-    }
-
-    await registrarAuditoria({
-      entidade: "pedido",
-      entidadeId: id,
-      acao: "status_alterado",
-      antes: anterior ? { status: anterior.status } : null,
-      depois: { status: novo },
-      usuarioId: usuario.id,
-    });
+    // O estado anterior e a auditoria são resolvidos dentro da transação de
+    // `atualizarStatusPedido`. Antes, a rota chamava `listarPedidosAdmin()` —
+    // carregava todos os pedidos do banco inteiro — para achar um, e a
+    // auditoria ficava fora da transação: uma falha nela devolvia 500 depois
+    // do status já ter mudado.
+    await atualizarStatusPedido(id, status, usuario.id);
 
     return mensagem.parse({ mensagem: "Status atualizado." });
   });
@@ -115,5 +90,3 @@ export async function registrarRotasPedidos(app: FastifyInstance) {
     return listaAuditoria.parse(await listarAuditoria("pedido", (req.params as { id: string }).id));
   });
 }
-
-export const metodosPagamentoAceitos = metodoPagamento.options;

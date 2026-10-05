@@ -40,6 +40,16 @@ export type ProdutoResponse = z.infer<typeof produtoResponse>;
 export const listaProdutos = z.array(produtoResponse);
 export type ListaProdutos = z.infer<typeof listaProdutos>;
 
+/**
+ * Resposta da criação de produto: a mensagem **e** o produto criado.
+ *
+ * A mensagem sozinha não serve: quem cadastrou precisa do `id` para editar ou
+ * inativar logo em seguida, e sem ele teria de varrer a listagem para descobrir
+ * qual dos produtos iguais é o novo.
+ */
+export const produtoCriadoResponse = z.object({ mensagem: z.string(), produto: produtoResponse });
+export type ProdutoCriadoResponse = z.infer<typeof produtoCriadoResponse>;
+
 export const categoriaResponse = z.object({ id: z.string(), nome: z.string() });
 export type CategoriaResponse = z.infer<typeof categoriaResponse>;
 
@@ -200,3 +210,74 @@ export const mensagem = z.object({ mensagem: z.string() });
 export type Mensagem = z.infer<typeof mensagem>;
 
 export const listaVazia = z.array(z.unknown());
+
+// ── Autenticação ───────────────────────────────────────────────────────────
+
+export const loginResponse = z.object({
+  usuario: usuarioPublico,
+});
+export type LoginResponse = z.infer<typeof loginResponse>;
+
+export const cadastroResponse = z.object({
+  usuario: usuarioPublico,
+});
+export type CadastroResponse = z.infer<typeof cadastroResponse>;
+
+export const sessaoResponse = z.object({
+  usuario: usuarioPublico.nullish(),
+});
+export type SessaoResponse = z.infer<typeof sessaoResponse>;
+
+export const logoutResponse = z.object({
+  mensagem: z.string(),
+});
+export type LogoutResponse = z.infer<typeof logoutResponse>;
+
+export const recuperarSenhaResponse = z.object({
+  mensagem: z.string(),
+  token: z.string().nullish(),
+});
+export type RecuperarSenhaResponse = z.infer<typeof recuperarSenhaResponse>;
+
+export const redefinirSenhaResponse = z.object({
+  mensagem: z.string(),
+});
+export type RedefinirSenhaResponse = z.infer<typeof redefinirSenhaResponse>;
+
+// ── Favoritos ──────────────────────────────────────────────────────────────
+
+export const favoritoResponse = z.object({
+  favorito: z.boolean(),
+});
+export type FavoritoResponse = z.infer<typeof favoritoResponse>;
+
+// ── Avaliações ─────────────────────────────────────────────────────────────
+
+export const avaliacaoCriadaResponse = z.object({
+  mensagem: z.string(),
+});
+export type AvaliacaoCriadaResponse = z.infer<typeof avaliacaoCriadaResponse>;
+
+// ── Endereço ───────────────────────────────────────────────────────────────
+
+export const enderecoSalvoResponse = z.object({
+  perfil,
+});
+export type EnderecoSalvoResponse = z.infer<typeof enderecoSalvoResponse>;
+
+// ── Localização ────────────────────────────────────────────────────────────
+
+export const cepResponse = z.object({
+  rua: z.string(),
+  bairro: z.string(),
+  cidade: z.string(),
+  estado: z.string(),
+});
+export type CepResponse = z.infer<typeof cepResponse>;
+
+// ── Erros ──────────────────────────────────────────────────────────────────
+
+export const erroResponse = z.object({
+  erro: z.string(),
+});
+export type ErroResponse = z.infer<typeof erroResponse>;
