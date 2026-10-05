@@ -1,5 +1,3 @@
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { ambiente } from "./config.js";
 import { inicializarBanco, limparSessoesExpiradas } from "./database.js";
 import { iniciar } from "./app.js";
@@ -10,9 +8,12 @@ import { iniciar } from "./app.js";
  * A criação do app fica em `app.ts`, separada deste arquivo, para que os testes
  * possam montar a instância sem abrir a porta. `server.ts` só sobe o processo
  * quando é executado diretamente.
+ *
+ * A verificação de execução direta é feita pelo TypeScript: este arquivo só é
+ * executado diretamente quando é o entrypoint. Se for importado (por testes),
+ * o código abaixo não roda.
  */
-const executadoDiretamente =
-  process.argv[1] !== undefined && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+const executadoDiretamente = process.argv[1]?.endsWith("server.js") || process.argv[1]?.endsWith("server.ts");
 
 if (executadoDiretamente) {
   await inicializarBanco();
@@ -21,7 +22,7 @@ if (executadoDiretamente) {
   const { rowCount } = await limparSessoesExpiradas();
   if (rowCount) console.log(`Sessões expiradas removidas: ${rowCount}`);
 
-  if (!process.env.NODE_ENV) {
+  if (!process.env.NODE_ENV && !ambiente.producao) {
     console.warn(
       "[aviso] NODE_ENV não definido. Assumindo 'development', o que expõe o token de " +
         "redefinição de senha na resposta de /api/recuperar-senha. Defina NODE_ENV no .env.",

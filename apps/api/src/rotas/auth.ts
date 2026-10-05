@@ -2,10 +2,15 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import {
   cadastroBody,
+  cadastroResponse,
   loginBody,
+  loginResponse,
+  logoutResponse,
   recuperarSenhaBody,
+  recuperarSenhaResponse,
   redefinirSenhaBody,
-  usuarioPublico,
+  redefinirSenhaResponse,
+  sessaoResponse,
   type Role,
 } from "@loja/shared";
 import {
@@ -45,7 +50,8 @@ export async function usuarioDaRequisicao(req: FastifyRequest): Promise<SessaoUs
   if (!usuarioId) return undefined;
 
   const usuario = await buscarUsuarioPorId(usuarioId);
-  return usuario ? { id: usuario.id, nome: usuario.nome, email: usuario.email, role: usuario.role as Role } : undefined;
+  if (!usuario) return undefined;
+  return { id: usuario.id, nome: usuario.nome, email: usuario.email, role: usuario.role as Role };
 }
 
 /** Exige sessão. Responde 401 quando não há. */
@@ -99,19 +105,19 @@ export async function registrarRotasAuth(app: FastifyInstance) {
 
     // O envelope `{ usuario }` é o contrato que o frontend já consome. Trocá-lo
     // aqui quebraria `App.tsx` sem que nada no servidor indicasse o problema.
-    return {
-      usuario: usuarioPublico.parse({ id: usuario.id, nome: usuario.nome, email: usuario.email, role: usuario.role }),
-    };
+    return loginResponse.parse({
+      usuario: { id: usuario.id, nome: usuario.nome, email: usuario.email, role: usuario.role },
+    });
   });
 
   app.post("/api/logout", async (req, reply) => {
     const token = req.cookies[COOKIE_SESSAO];
     if (token) await encerrarSessao(hashToken(token));
     reply.clearCookie(COOKIE_SESSAO, { path: "/" });
-    return { mensagem: "Sessão encerrada." };
+    return logoutResponse.parse({ mensagem: "Sessão encerrada." });
   });
 
-  app.get("/api/sessao", async (req) => ({ usuario: (await usuarioDaRequisicao(req)) ?? null }));
+  app.get("/api/sessao", async (req) => sessaoResponse.parse({ usuario: (await usuarioDaRequisicao(req)) ?? null }));
 
   app.post("/api/cadastro", async (req, reply) => {
     const { nome, email, senha } = cadastroBody.parse(req.body);
@@ -134,7 +140,7 @@ export async function registrarRotasAuth(app: FastifyInstance) {
     await criarSessao(token, id, DURACAO_SESSAO_MS);
     definirCookieSessao(reply, token);
     reply.code(201);
-    return { usuario: { id, nome, email, role: "cliente" as const } };
+    return cadastroResponse.parse({ usuario: { id, nome, email, role: "cliente" } });
   });
 
   app.post(
@@ -154,10 +160,10 @@ export async function registrarRotasAuth(app: FastifyInstance) {
       }
 
       reply.code(200);
-      return {
+      return recuperarSenhaResponse.parse({
         mensagem: "Se o e-mail estiver cadastrado, enviaremos as instruções de recuperação.",
         ...(exporToken && token ? { token } : {}),
-      };
+      });
     },
   );
 
@@ -167,6 +173,6 @@ export async function registrarRotasAuth(app: FastifyInstance) {
     if (!(await redefinirSenhaComToken(token, senha))) {
       throw ErroApp.badRequest("O link de recuperação é inválido ou expirou.", "token_invalido");
     }
-    return { mensagem: "Senha redefinida com sucesso. Faça login com a nova senha." };
+    return redefinirSenhaResponse.parse({ mensagem: "Senha redefinida com sucesso. Faça login com a nova senha." });
   });
 }

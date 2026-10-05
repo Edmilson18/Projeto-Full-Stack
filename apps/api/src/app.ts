@@ -13,6 +13,7 @@ import { ErroApp } from "./erros.js";
 import { registrarRotasAuth } from "./rotas/auth.js";
 import { registrarRotasCatalogo } from "./rotas/catalogo.js";
 import { registrarRotasPedidos } from "./rotas/pedidos.js";
+import { registrarRotasLocalizacao } from "./rotas/localizacao.js";
 
 const TIPOS_CONTEUDO: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -26,27 +27,48 @@ const TIPOS_CONTEUDO: Record<string, string> = {
 };
 
 /** Arquivos estáticos servidos a partir da raiz do repositório. */
-const PAGINAS_RAIZ = new Set(["/", "/index.html", "/admin.html", "/dashboard.html", "/login.html", "/style.css"]);
+const PAGINAS_RAIZ = new Set(["/", "/index.html"]);
+
+/**
+ * Resolve a rota para um arquivo dentro de `raiz`, ou `null` se ela sair.
+ *
+ * `path.join` resolve `..`, então `/assets/../../../etc/passwd` escapa do
+ * diretório do frontend e chega em qualquer arquivo legível pelo processo.
+ * A comparação de contenção depois do `path.resolve` é o que fecha isso: o
+ * caminho resolvido precisa estar dentro da base, e não só ter o prefixo
+ * textual dela.
+ *
+ * A query string é separada porque `req.url` a traz junto, e ela não faz parte
+ * do nome do arquivo.
+ */
+function resolverDentroDaRaiz(raiz: string, rota: string): string | null {
+  const semQuery = rota.split(/[?#]/, 1)[0] ?? "";
+  const relativo = semQuery.replace(/^\/+/, "");
+  if (!relativo) return null;
+
+  const base = path.resolve(raiz);
+  const absoluto = path.resolve(base, relativo);
+  return absoluto === base || absoluto.startsWith(base + path.sep) ? absoluto : null;
+}
 
 async function servirArquivo(res: FastifyReply, rota: string) {
-  const normalizada = rota === "/" || rota === "/login.html" ? "/index.html" : rota;
-  const ehFrontend = normalizada === "/index.html" || normalizada.startsWith("/assets/");
-  // `/build/` continua resolvendo da raiz: é de onde `admin.html` e
-  // `dashboard.html` carregam os painéis antigos, até a Fase 6 removê-los.
-  const ehLegado = normalizada.startsWith("/build/");
+  const normalizada = rota === "/" ? "/index.html" : rota;
 
-  const caminho = ehFrontend
-    ? path.join(ambiente.dist, normalizada.replace(/^\//, ""))
-    : ehLegado
-      ? path.join(ambiente.buildLegado, normalizada.replace(/^\/build\//, ""))
-      : path.join(ambiente.raiz, normalizada.replace(/^\//, ""));
+  // Só o build do frontend é servido. A raiz do repositório **não** é: ela
+  // contém `.env`, `package-lock.json` e o código-fonte, e qualquer rota não
+  // mapeada acabava nela — transformava uma URL sem match numa leitura
+  // anônima do disco.
+  const naoEncontrado = () => res.code(404).type("text/plain; charset=utf-8").send("Arquivo não encontrado.");
+
+  const caminho = resolverDentroDaRaiz(ambiente.dist, normalizada);
+  if (!caminho) return naoEncontrado();
 
   try {
     const conteudo = await fs.readFile(caminho);
     res.header("Content-Type", TIPOS_CONTEUDO[path.extname(caminho).toLowerCase()] ?? "application/octet-stream");
-    res.send(conteudo);
+    return res.send(conteudo);
   } catch {
-    res.code(404).type("text/plain; charset=utf-8").send("Arquivo não encontrado.");
+    return naoEncontrado();
   }
 }
 
@@ -77,9 +99,14 @@ export function criarApp(opcoes: OpcoesApp = {}) {
     trustProxy: ambiente.producao,
   });
 
-  app.register(cookie, { secret: ambiente.cookieSecret });
+  // Sem `secret`: o token de sessão é um valor aleatório de 32 bytes e a
+  // validação é feita contra o SHA-256 guardado no banco. O plugin precisa ser
+  // registrado para ler e escrever o cookie, mas não há assinatura a fazer.
+  app.register(cookie);
   app.register(cors, {
-    origin: ambiente.producao ? true : ["http://localhost:5173", "http://127.0.0.1:5173"],
+    origin: ambiente.producao
+      ? ambiente.origemPermitida
+      : ["http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:5174", "http://127.0.0.1:5174"],
     credentials: true,
   });
   app.register(helmet, { contentSecurityPolicy: ambiente.producao });
@@ -159,9 +186,9 @@ export function criarApp(opcoes: OpcoesApp = {}) {
   app.register(registrarRotasAuth);
   app.register(registrarRotasCatalogo);
   app.register(registrarRotasPedidos);
+  app.register(registrarRotasLocalizacao);
 
   // Páginas estáticas. A ordem importa: o `setNotFoundHandler` cobre o resto.
-  app.get("/build/*", (req, reply) => servirArquivo(reply, req.url));
   for (const pagina of PAGINAS_RAIZ) {
     if (pagina === "/") continue;
     app.get(pagina, (_req, reply) => servirArquivo(reply, pagina));

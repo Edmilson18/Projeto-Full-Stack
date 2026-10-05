@@ -39,13 +39,15 @@ export const ambiente = {
    * autenticado pela sessão do usuário.
    */
   origemPermitida: process.env.APP_URL ?? "http://localhost:3000",
-  /** Painéis antigos, que o `admin.html` e o `dashboard.html` ainda carregam. */
-  buildLegado: path.join(raizProjeto, "build"),
   raiz: raizProjeto,
   /**
-   * Assinatura dos cookies. Ausente em desenvolvimento, onde não é preciso:
-   * `signed: false` no cookie, mas o valor precisa existir para o plugin não
-   * recusar a inicialização.
+   * A sessão não usa assinatura de cookie, e `COOKIE_SECRET` foi removido.
+   *
+   * O valor do cookie é um token de 32 bytes aleatórios, e o banco guarda
+   * somente o SHA-256 dele: um cookie forjado não tem como casar com a base.
+   * Assinar o cookie por cima acrescentaria uma chave a proteger e rotacionar
+   * sem fechar nenhuma brecha, enquanto a variável continuava sendo exigida em
+   * produção — ou seja, um segredo que não protegia nada e ainda podia derrubar
+   * o boot por estar faltando ou vir do placeholder do compose.
    */
-  cookieSecret: process.env.COOKIE_SECRET ?? "desenvolvimento-sem-assinatura",
 };
