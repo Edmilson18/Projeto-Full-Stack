@@ -114,7 +114,7 @@ export async function aplicarMigracoes(): Promise<string[]> {
     const arquivos = fs
       .readdirSync(PASTA_MIGRACOES)
       .filter((arquivo) => arquivo.endsWith(".sql"))
-      .sort();
+      .toSorted();
 
     for (const arquivo of arquivos) {
       if (jaAplicadas.has(arquivo)) continue;

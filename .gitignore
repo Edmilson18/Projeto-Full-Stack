@@ -34,3 +34,8 @@ Thumbs.db
 # Rascunho antigo de notas, substituido por .local/UPGRADES.md. Ignorado para
 # nao voltar por accident se for recriado.
 PROJETO FULL STACK.txt
+
+# Scripts de limpeza pontual do banco local. Nao sao parte do projeto: valem so
+# para a maquina onde foram escritos e nao ha nada versionavel neles.
+remover-*.sql
+*.sql.local

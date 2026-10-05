@@ -22,11 +22,7 @@ export type Cliente = {
 
 export type Resposta = {
   status: number;
-  // `any` aqui é proposital, e é a dívida que estes testes existem para medir:
-  // a API não tem contrato de resposta tipado. Quando a Fase 3 tipar as
-  // respostas, este campo passa a ser o tipo inferido do schema Zod e os `as`
-  // do arquivo somem junto.
-  // eslint-disable-next-line typescript/no-explicit-any
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   corpo: any;
   cookies: Array<{ name: string; value: string }>;
 };
@@ -69,8 +65,7 @@ export async function iniciarContexto(opcoes: { semRateLimit?: boolean } = {}): 
       // nome esperado e não só algum valor.
       if (definido !== null) cookie = definido === "" ? null : `loja_session=${definido}`;
 
-      // eslint-disable-next-line typescript/no-explicit-any
-      let dados: any = resposta.body;
+      let dados: unknown = resposta.body;
       try {
         dados = JSON.parse(resposta.body);
       } catch {
@@ -106,8 +101,7 @@ export async function clienteAutenticado(
   novo: () => Cliente,
   email: string,
   senha: string,
-  // eslint-disable-next-line typescript/no-explicit-any
-): Promise<{ cliente: Cliente; usuario: any }> {
+): Promise<{ cliente: Cliente; usuario: unknown }> {
   const cliente = novo();
   const resposta = await cliente.post("/api/login", { email, senha });
   if (resposta.status !== 200) throw new Error(`Falha no login de ${email}: ${resposta.status}`);

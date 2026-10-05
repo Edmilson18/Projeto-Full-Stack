@@ -1,13 +1,16 @@
-# ADR 003: Monorepo com pnpm workspaces e Turborepo
+# ADR 003: Monorepo com workspaces e cache de build
 
-- **Status:** Aceita com ressalva
+- **Status:** Parcialmente adotada
 - **Data:** 2026-09-25
 - **Escopo:** Organização do repositório
-- **Ressalva:** a estrutura de 3 pacotes foi implementada, mas com **npm
-  workspaces** em vez de pnpm. O pnpm exige privilégio de administrador para
-  ser instalado, indisponível no ambiente de execução. O `package.json` declara
-  `"packageManager": "pnpm@9.15.0"` para tornar a intenção explícita. Ver
-  "Consequências" para o que ficou como dívida.
+- **O que foi realmente adotado:** a estrutura de três pacotes, com **npm
+  workspaces**. Nem o pnpm nem o Turborepo entraram: o pnpm exige privilégio de
+  administrador no ambiente de execução, e o cache de build do Turborepo foi
+  dispensado porque, com três pacotes, o `npm run build` em sequência já é rápido
+  o bastante para não justificar o grafo de cache. O `package.json` da raiz
+  declara `"packageManager": "npm@12.0.2"`.
+- **Título original:** "Monorepo com pnpm workspaces e Turborepo". O nome do
+  arquivo continua o original para não quebrar links.
 
 ## Contexto
 
@@ -43,37 +46,54 @@ nenhum dos problemas deste ADR.
 
 ## Decisão
 
-**pnpm workspaces com Turborepo**, em três pacotes:
+Workspaces em três pacotes. **npm**, sem cache de build:
 
 ```
-apps/api        Fastify, Drizzle, PostgreSQL
-apps/web        Next.js
+apps/api        Fastify, PostgreSQL via pg
+apps/web        React 19 com Vite
 packages/shared Esquemas Zod e tipos
 ```
 
 O `packages/shared` é a peça central: é o que o frontend e o servidor
 importam, e o que impede a duplicação do contrato.
 
+Duas partes da decisão original **não** foram implementadas, e cada uma por um
+motivo diferente:
+
+- **pnpm.** Requer privilégio de administrador para instalar, indisponível no
+  ambiente de execução. O npm não tem store content-addressable, então cada
+  pacote recebe sua própria cópia de `typescript`, `vitest` e `jsdom`. Isso é a
+  dívida real que a decisão original pretendia evitar.
+- **Turborepo.** O cache de build foi descartado depois de medir: `npm run
+  build` leva poucos segundos e, sem cache, recompila o `packages/shared` de
+  todo modo. Para três pacotes, a configuração do grafo custaria mais do que
+  economiza.
+
 ## Consequências
 
 **Positivo**
 
 - O contrato Zod é um pacote real, com o tipo inferido nos dois lados.
-- Store content-addressable elimina a divergência de versões entre pacotes.
-- Cache de build do Turborepo evita recompilar o que não mudou.
-- O deploy passa a poder tratar `apps/web` e `apps/api` como projetos
-  independentes, sem reescrever pipeline.
+- O deploy trata `apps/web` e `apps/api` como projetos independentes, sem
+  reescrever pipeline.
+- Um lockfile só, e ferramentas que já vinham no ambiente de execução.
 
 **Negativo**
 
-- `pnpm` passa a ser requisito de instalação, e não só o npm.
+- Sem store content-addressable, cada pacote recebe sua própria cópia de
+  `typescript`, `vitest` e `jsdom`, em versões diferentes. É a origem de
+  "funciona num pacote e falha no outro", e de uma classe de bug que só aparece
+  depois de um `npm install`.
+- Sem cache de build, todo `npm run build` recompila os três pacotes. Aceitável
+  no tamanho atual; vira incômodo se o `apps/web` crescer.
+- `npm run typecheck` e `npm test` precisam compilar o `packages/shared`
+  antes, porque `apps/api` e `apps/web` importam os tipos do `dist/` dele. A
+  ordem está explícita no `package.json` da raiz.
 - Debug de resolução de módulos fica um nível mais profundo, o que exige
- xkifer de estar familiarizado.
-- Um segundo lockfile. Quem conhece apenas npm vai achar o
-  `pnpm-lock.yaml` unfamiliar.
+- Debug de resolução de módulos não muda: continua sendo o do npm.
+- Um segundo lockfile não existe: segue um só.
 
 **Mitigação**
 
-A migração é feita mantendo a aplicação funcionando: o `apps/api` começa
-importando de `src/` e o `apps/web` idem, e os caminhos são invertidos ao longo
-da fase, com `npm run dev` e `npm test` validados a cada passo.
+A migração foi feita mantendo a aplicação funcionando a cada passo, com
+`npm run dev` e `npm test` validados.

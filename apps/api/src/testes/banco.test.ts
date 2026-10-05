@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
-  alternarFavorito,
+  desfavoritarProduto,
+  favoritarProduto,
   atualizarEnderecoUsuario,
   atualizarProduto,
   atualizarStatusPedido,
@@ -51,7 +52,7 @@ describe("senhas", () => {
 
     // buscarUsuarioPorId nem retorna a coluna senha; o email expoe o hash.
     const usuario = await buscarUsuarioPorId(id);
-    expect("senha" in (usuario as object)).toBe(false);
+    expect(usuario).not.toHaveProperty("senha");
 
     const comSenha = await buscarUsuarioPorEmail(`${id}@exemplo.com`);
     expect(comSenha?.senha).not.toContain("senha123");
@@ -60,7 +61,8 @@ describe("senhas", () => {
 
   it("confere a senha correta e rejeita a errada", async () => {
     const id = await novoCliente();
-    const { senha } = (await buscarUsuarioPorEmail(`${id}@exemplo.com`)) as { senha: string };
+    const comSenha = await buscarUsuarioPorEmail(`${id}@exemplo.com`);
+    const senha = comSenha?.senha ?? "";
 
     expect(verificarSenha("senha123", senha)).toBe(true);
     expect(verificarSenha("senha124", senha)).toBe(false);
@@ -70,8 +72,8 @@ describe("senhas", () => {
   it("gera um salt diferente a cada hash", async () => {
     const a = await novoCliente();
     const b = await novoCliente();
-    const hashA = ((await buscarUsuarioPorEmail(`${a}@exemplo.com`)) as { senha: string }).senha;
-    const hashB = ((await buscarUsuarioPorEmail(`${b}@exemplo.com`)) as { senha: string }).senha;
+    const hashA = (await buscarUsuarioPorEmail(`${a}@exemplo.com`))?.senha ?? "";
+    const hashB = (await buscarUsuarioPorEmail(`${b}@exemplo.com`))?.senha ?? "";
 
     // Mesma senha, hashes diferentes: sem isso, dois usuários iguais seriam
     // identificaveis no banco.
@@ -434,13 +436,22 @@ describe("favoritos e avaliações", () => {
     usuario = await novoCliente();
   });
 
-  it("alterna favorito e devolve o estado final", async () => {
+  it("grava o favorito pelo estado desejado, de forma idempotente", async () => {
     expect(await listarFavoritos(usuario)).toHaveLength(0);
 
-    expect(await alternarFavorito(usuario, "prod-teclado")).toBe(true);
+    expect(await favoritarProduto(usuario, "prod-teclado")).toBe(true);
     expect(await listarFavoritos(usuario)).toHaveLength(1);
 
-    expect(await alternarFavorito(usuario, "prod-teclado")).toBe(false);
+    // Repetir a mesma escrita não pode alternar o estado: era exatamente o que
+    // fazia um clique duplo inverter o favorito.
+    expect(await favoritarProduto(usuario, "prod-teclado")).toBe(true);
+    expect(await listarFavoritos(usuario)).toHaveLength(1);
+
+    expect(await desfavoritarProduto(usuario, "prod-teclado")).toBe(false);
+    expect(await listarFavoritos(usuario)).toHaveLength(0);
+
+    // Remover o que não existe também não muda nada, e não falha.
+    expect(await desfavoritarProduto(usuario, "prod-teclado")).toBe(false);
     expect(await listarFavoritos(usuario)).toHaveLength(0);
   });
 
@@ -477,8 +488,8 @@ describe("endereço e status de pedido", () => {
       cidade: "São Paulo",
       estado: "SP",
     });
-    const perfil = (await buscarPerfilUsuario(usuario)) as { cidade?: string };
-    expect(perfil.cidade).toBe("São Paulo");
+    const perfil = await buscarPerfilUsuario(usuario);
+    expect(perfil?.cidade).toBe("São Paulo");
   });
 
   it("rejeita status de pedido desconhecido", async () => {
@@ -510,8 +521,8 @@ describe("tokens de redefinição de senha", () => {
     expect(token?.length).toBeGreaterThanOrEqual(32);
     expect(await redefinirSenhaComToken(token ?? "", "novaSenha456")).toBe(true);
 
-    const depois = (await buscarUsuarioPorEmail(`${usuario}@exemplo.com`)) as { senha: string };
-    expect(verificarSenha("novaSenha456", depois.senha)).toBe(true);
+    const depois = await buscarUsuarioPorEmail(`${usuario}@exemplo.com`);
+    expect(verificarSenha("novaSenha456", depois?.senha ?? "")).toBe(true);
 
     // Segundo uso do mesmo token tem que falhar.
     expect(await redefinirSenhaComToken(token ?? "", "outraSenha789")).toBe(false);

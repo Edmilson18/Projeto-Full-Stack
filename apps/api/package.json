@@ -12,6 +12,7 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "db:migrate": "tsx src/migrar.ts",
+    "db:migrate:dist": "node dist/migrar.js",
     "db:seed": "tsx src/seed.ts --seed",
     "db:setup": "tsx src/seed.ts --init",
     "db:reset": "tsx src/resetar.ts"
@@ -31,6 +32,6 @@
     "@types/pg": "^8.23.1",
     "tsx": "^4.23.12",
     "typescript": "^7.0.2",
-    "vitest": "^5.0.2"
+    "vitest": "^5.0.3"
   }
 }

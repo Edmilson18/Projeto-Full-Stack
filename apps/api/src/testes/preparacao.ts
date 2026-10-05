@@ -14,6 +14,22 @@ import { afterAll, beforeAll } from "vitest";
  */
 const SCHEMA = `teste_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 
+/**
+ * Cita um identificador de schema para uso em SQL.
+ *
+ * `DROP SCHEMA` e `CREATE SCHEMA` recebem um **identificador**, não um valor, e
+ * o PostgreSQL não aceita parâmetro ligado (`$1`) nesse lugar: a query falha
+ * com `syntax error at or near "$1"`. Por isso o nome é validado por um
+ * padrão estrito e então citado com aspas duplas — a validação é o que
+ * garante que não há como escapar do identificador.
+ */
+function citarSchema(nome: string): string {
+  if (!/^[a-z_][a-z0-9_]*$/.test(nome)) {
+    throw new Error(`Nome de schema fora do padrão seguro: ${nome}`);
+  }
+  return `"${nome}"`;
+}
+
 // Precisa ser definido antes de qualquer import que carregue `config.ts`,
 // porque o `search_path` é lido no momento em que o pool é criado.
 process.env.DATABASE_SCHEMA = SCHEMA;
@@ -30,8 +46,8 @@ beforeAll(async () => {
   // Pool separado, sem `search_path`: é o que cria e apaga o schema.
   admin = new Pool({ connectionString: ambiente.databaseUrl, max: 1 });
 
-  await admin.query(`DROP SCHEMA IF EXISTS ${SCHEMA} CASCADE`);
-  await admin.query(`CREATE SCHEMA ${SCHEMA}`);
+  await admin.query(`DROP SCHEMA IF EXISTS ${citarSchema(SCHEMA)} CASCADE`);
+  await admin.query(`CREATE SCHEMA ${citarSchema(SCHEMA)}`);
 
   await aplicarMigracoes();
   await garantirAdministrador();
@@ -42,6 +58,6 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await fecharPool();
-  await admin?.query(`DROP SCHEMA IF EXISTS ${SCHEMA} CASCADE`);
+  await admin?.query(`DROP SCHEMA IF EXISTS ${citarSchema(SCHEMA)} CASCADE`);
   await admin?.end();
 });

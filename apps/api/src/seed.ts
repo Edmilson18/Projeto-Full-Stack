@@ -246,8 +246,11 @@ if (executadoDiretamente) {
   console.log(migracoes.length > 0 ? `Migrações aplicadas: ${migracoes.join(", ")}` : "Nenhuma migração nova.");
 
   const semeado = await semear();
+  const total = semeado.produtos + semeado.cupons + semeado.pedidos;
   console.log(
-    `Seed concluído — produtos: ${semeado.produtos}, cupons: ${semeado.cupons}, pedidos: ${semeado.pedidos} (novos de ${semeado.produtos + semeado.cupons + semeado.pedidos === 0 ? "nenhum" : "cada tabela"})`,
+    total > 0
+      ? `Seed concluído — produtos: ${semeado.produtos}, cupons: ${semeado.cupons}, pedidos: ${semeado.pedidos} (novos)`
+      : "Seed concluído — nenhum registro novo (todos já existiam)",
   );
   console.log("Admin: admin@lojaficticia.com / admin123");
   await fecharPool();
