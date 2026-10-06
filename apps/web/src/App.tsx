@@ -1,20 +1,22 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { LogOut } from "lucide-react";
-import type { AvaliacaoResponse, Conta, ProdutoResponse } from "@loja/shared";
+import type { AvaliacaoResponse, CepResponse, Conta, ProdutoResponse } from "@loja/shared";
 import { useAuth } from "./hooks/useAuth.js";
 import { useCarrinho } from "./hooks/useCarrinho.js";
 import { useDebounce } from "./hooks/useDebounce.js";
 import { useFavoritos } from "./hooks/useFavoritos.js";
+import { useLocalizacao } from "./hooks/useLocalizacao.js";
 import { useProducts } from "./hooks/useProducts.js";
 import { useRecentes } from "./hooks/useRecentes.js";
 import { useTema } from "./hooks/useTema.js";
 import { api } from "./lib/api.js";
-import { formatarMoeda, normalizar } from "./lib/utils.js";
+import { formatarMoeda, normalizar, podeAvaliar } from "./lib/utils.js";
 import { Header } from "./components/Header.js";
 import { ProductCard } from "./components/ProductCard.js";
 import { CartPanel } from "./components/CartPanel.js";
 import { LoginPage } from "./components/LoginPage.js";
 import { LoginPromptModal } from "./components/LoginPromptModal.js";
+import { AvaliarCompraModal, type AvaliacaoPendente, type NotaEnviada } from "./components/AvaliarCompraModal.js";
 import { ProductModal } from "./components/ProductModal.js";
 import { AccountModal } from "./components/AccountModal.js";
 import { PaymentSummary } from "./components/PaymentSummary.js";
@@ -33,6 +35,8 @@ export default function App() {
   const [telaLogin, setTelaLogin] = useState(false);
   const [mensagem, setMensagem] = useState("");
   const { favoritos, alternarFavorito, setFavoritos } = useFavoritos({ usuarioLogado: !!usuario, onErro: setMensagem });
+  const { detectarEndereco } = useLocalizacao({ usuarioLogado: !!usuario });
+  const [enderecoSugerido, setEnderecoSugerido] = useState<CepResponse | null>(null);
   const [loginPrompt, setLoginPrompt] = useState<{ titulo: string; mensagem: string } | null>(null);
   const [produtoSelecionado, setProdutoSelecionado] = useState<Produto | null>(null);
   const [carrinhoAberto, setCarrinhoAberto] = useState(false);
@@ -42,6 +46,8 @@ export default function App() {
   const [categoriaSelecionada, setCategoriaSelecionada] = useState("Todas");
   const [processandoPedido, setProcessandoPedido] = useState(false);
   const [pedidoConfirmado, setPedidoConfirmado] = useState<{ id: string; total: number; metodo: string } | null>(null);
+  /** Produtos da compra recém-concluída, esperando avaliação. */
+  const [paraAvaliar, setParaAvaliar] = useState<AvaliacaoPendente[] | null>(null);
   const [resumoPedido, setResumoPedido] = useState<{
     subtotal: number;
     frete: number;
@@ -79,6 +85,28 @@ export default function App() {
     });
   }, [produtos, buscaDebounced, categoriaSelecionada]);
 
+  /**
+   * Posição do produto no catálogo cheio, para escolher a foto de fallback.
+   *
+   * Nenhum produto do seed tem `imagem` no banco, então a foto vem da lista
+   * padrão do `imagemDe`, e essa lista é escolhida **por posição**. Passando o
+   * índice da lista local de cada seção, o mesmo produto aparecia com fotos
+   * diferentes na vitrine, nos favoritos, no histórico e no modal. Buscar no
+   * catálogo inteiro dá a mesma foto em qualquer tela.
+   *
+   * `Math.max` protege o `-1` do `findIndex` quando o produto não está no
+   * catálogo (favorito de uma conta antiga, por exemplo): sem ele, o índice
+   * negativo cairia no último item da lista.
+   */
+  const indiceDe = useCallback(
+    (id: string) =>
+      Math.max(
+        0,
+        produtos.findIndex((p) => p.id === id),
+      ),
+    [produtos],
+  );
+
   const abrirProduto = useCallback(
     (produto: Produto) => {
       setProdutoSelecionado(produto);
@@ -108,6 +136,29 @@ export default function App() {
     }
   }, [usuario, carregarConta]);
 
+  /**
+   * Geolocalização ao entrar no site, e só com sessão ativa.
+   *
+   * O `usuario` na lista de dependências é o que garante o "sem conta não
+   * pergunta": sem ele, deslogar e recarregar pediria permissão de novo.
+   */
+  useEffect(() => {
+    if (!usuario) {
+      // Saiu da conta: a sugestão anterior era daquele usuário e não pode
+      // sobrar para o próximo que logar.
+      setEnderecoSugerido(null);
+    }
+    let ativo = true;
+    void (async () => {
+      if (!usuario) return;
+      const detectado = await detectarEndereco();
+      if (detectado && ativo) setEnderecoSugerido(detectado);
+    })();
+    return () => {
+      ativo = false;
+    };
+  }, [usuario, detectarEndereco]);
+
   const salvarEndereco = useCallback(async (endereco: Record<string, string>) => {
     const dados = await api.put<{ perfil: Conta["perfil"] }>("/conta/endereco", endereco);
     setDadosConta((atual) => (atual ? { ...atual, perfil: dados.perfil } : atual));
@@ -119,6 +170,42 @@ export default function App() {
     const lista = await api.get<AvaliacaoResponse[]>(`/avaliacoes/${encodeURIComponent(produtoId)}`);
     if (Array.isArray(lista)) setAvaliacoes(lista);
   }, []);
+
+  /**
+   * Envia as várias avaliações do pop-up pós-compra e devolve o aviso.
+   *
+   * Não reaproveita `enviarAvaliacao` porque aquela mostra um aviso por
+   * produto: três itens dariam três toasts empilhados. Aqui sai um resumo só.
+   *
+   * Uma falha não descarta as outras: quem avaliou dois de três produtos não
+   * perde as duas respostas por causa do terceiro, que é o que acontece se a
+   * chamada inteira for abortada no primeiro erro.
+   */
+  const enviarAvaliacoes = useCallback(
+    async (notas: NotaEnviada[]): Promise<string> => {
+      const resultados = await Promise.allSettled(
+        notas.map((item) => api.post(`/avaliacoes/${encodeURIComponent(item.produtoId)}`, item)),
+      );
+      const falhas = resultados.filter((r) => r.status === "rejected").length;
+
+      if (falhas > 0 && falhas === notas.length) {
+        throw new Error("Não foi possível enviar nenhuma das avaliações.");
+      }
+
+      const enviadas = notas.length - falhas;
+      // A lista em tela vem do modal do produto; recarregar a conta mantém as
+      // permissões em dia para quem escolher avaliar de novo.
+      void carregarConta();
+
+      if (falhas === 0) {
+        return enviadas === 1 ? "Avaliação enviada. Obrigado!" : `${enviadas} avaliações enviadas. Obrigado!`;
+      }
+      return `${enviadas} ${enviadas === 1 ? "avaliação enviada" : "avaliações enviadas"}, ${falhas} ${
+        falhas === 1 ? "falhou" : "falharam"
+      }.`;
+    },
+    [carregarConta],
+  );
 
   const carregarAvaliacoes = useCallback(async (produtoId: string) => {
     try {
@@ -148,13 +235,21 @@ export default function App() {
         total: dados.pedido.total_final,
         metodo: resumoPedido.metodo,
       });
+      // A compra libera a avaliação, então a pergunta vai logo depois da
+      // confirmação. Fica guardada aqui porque a confirmação aparece primeiro.
+      setParaAvaliar(itensSelecionados.map((item) => ({ produtoId: item.id, nome: item.nome })));
+      // A conta guarda os pedidos, e é dela que sai a permissão de avaliar. Sem
+      // esta recarga, quem acabou de comprar continuava vendo o formulário
+      // travado até fechar e abrir a página de novo — a compra existia no
+      // servidor, mas a tela ainda não sabia.
+      void carregarConta();
       void recarregar();
     } catch (err) {
       setMensagem(err instanceof Error ? err.message : "Não foi possível finalizar o pedido.");
     } finally {
       setProcessandoPedido(false);
     }
-  }, [resumoPedido, usuario, carrinho, recarregar, setCarrinho]);
+  }, [resumoPedido, usuario, carrinho, carregarConta, recarregar, setCarrinho]);
 
   const handleFavoritar = useCallback(
     (produtoId: string) => {
@@ -405,11 +500,11 @@ export default function App() {
         </section>
 
         <section className="showcase-grid">
-          {grupos.destaque.map((produto, index) => (
+          {grupos.destaque.map((produto) => (
             <ProductCard
               key={produto.id}
               produto={produto}
-              indice={index}
+              indice={indiceDe(produto.id)}
               variante="featured"
               favorito={favoritos.includes(produto.id)}
               onAbrir={abrirProduto}
@@ -430,11 +525,11 @@ export default function App() {
             <div className="showcase-grid">
               {produtos
                 .filter((p) => favoritos.includes(p.id))
-                .map((produto, index) => (
+                .map((produto) => (
                   <ProductCard
                     key={produto.id}
                     produto={produto}
-                    indice={index}
+                    indice={indiceDe(produto.id)}
                     variante="compact"
                     favorito={true}
                     onAbrir={abrirProduto}
@@ -475,11 +570,11 @@ export default function App() {
           <p className="loading">Carregando catálogo...</p>
         ) : (
           <section className="catalog-grid">
-            {produtosFiltrados.map((produto, index) => (
+            {produtosFiltrados.map((produto) => (
               <ProductCard
                 key={produto.id}
                 produto={produto}
-                indice={index}
+                indice={indiceDe(produto.id)}
                 favorito={favoritos.includes(produto.id)}
                 onAbrir={abrirProduto}
                 onFavoritar={handleFavoritar}
@@ -514,11 +609,11 @@ export default function App() {
               </div>
             </div>
             <div className="showcase-grid">
-              {recentes.map((produto, index) => (
+              {recentes.map((produto) => (
                 <ProductCard
                   key={produto.id}
                   produto={produto}
-                  indice={index}
+                  indice={indiceDe(produto.id)}
                   variante="compact"
                   onAbrir={abrirProduto}
                   onFavoritar={handleFavoritar}
@@ -586,6 +681,12 @@ export default function App() {
           produto={produtoSelecionado}
           usuario={usuario}
           avaliacoes={avaliacoes}
+          indice={indiceDe(produtoSelecionado.id)}
+          podeAvaliar={podeAvaliar(
+            dadosConta?.pedidos ?? [],
+            dadosConta?.minhasAvaliacoes ?? [],
+            produtoSelecionado.id,
+          )}
           onFechar={() => setProdutoSelecionado(null)}
           onAdicionarAoCarrinho={adicionarAoCarrinho}
           onEnviarAvaliacao={enviarAvaliacao}
@@ -600,6 +701,7 @@ export default function App() {
           dadosConta={dadosConta}
           onFechar={() => setContaAberta(false)}
           onSalvarEndereco={salvarEndereco}
+          enderecoSugerido={enderecoSugerido}
           onDesfavoritar={handleDesfavoritar}
           onAbrirProduto={handleAbrirFavorito}
           onMensagem={setMensagem}
@@ -632,11 +734,54 @@ export default function App() {
               <strong>{formatarMoeda(pedidoConfirmado.total)}</strong>
               <small>{pedidoConfirmado.metodo.toUpperCase()} · confirmação demonstrativa</small>
             </div>
-            <button className="primary-btn full" onClick={() => setPedidoConfirmado(null)}>
-              Continuar comprando
+            <button
+              className="primary-btn full"
+              onClick={() => {
+                const proximo = paraAvaliar;
+                setPedidoConfirmado(null);
+                // Só oferece avaliação se a compra tiver trazido produto para
+                // avaliar. Sem este item o botão é só o "continuar" de sempre.
+                if (proximo && proximo.length > 0) setParaAvaliar(proximo);
+              }}
+            >
+              {paraAvaliar && paraAvaliar.length > 0 ? "Avaliar produtos" : "Continuar comprando"}
             </button>
           </section>
         </div>
+      )}
+
+      {/*
+        Só entra depois que a confirmação saiu. As duas janelas ficariam
+        empilhadas — e quem compra precisa ver "compra confirmada" antes de ser
+        levado a avaliar, senão não há garantia de que a pergunta é sobre algo
+        que ele realmente acabou de comprar.
+      */}
+      {!pedidoConfirmado && paraAvaliar && paraAvaliar.length > 0 && (
+        <AvaliarCompraModal
+          itens={paraAvaliar}
+          // `minhasAvaliacoes` chega em `produto_id`; a janela trabalha com o
+          // id do produto em camelCase, então a troca acontece na entrada.
+          jaAvaliadas={(dadosConta?.minhasAvaliacoes ?? [])
+            // Só entra o que ainda está na janela: um produto já avaliado e sem
+            // compra nova não tem o que atualizar.
+            .filter((avaliacao) =>
+              podeAvaliar(dadosConta?.pedidos ?? [], dadosConta?.minhasAvaliacoes ?? [], avaliacao.produto_id),
+            )
+            .map((avaliacao) => ({
+              produtoId: avaliacao.produto_id,
+              nota: avaliacao.nota,
+              comentario: avaliacao.comentario ?? null,
+            }))}
+          onFechar={() => setParaAvaliar(null)}
+          onEnviar={async (notas) => {
+            // O aviso só é mostrado depois de fechar a janela: enquanto ela
+            // estiver aberta o toast ficaria escondido atrás do overlay.
+            const aviso = await enviarAvaliacoes(notas);
+            setParaAvaliar(null);
+            setMensagem(aviso);
+            return aviso;
+          }}
+        />
       )}
     </div>
   );

@@ -156,10 +156,28 @@ export const perfil = usuarioPublico.extend({
 });
 export type Perfil = z.infer<typeof perfil>;
 
+/**
+ * Avaliação da própria pessoa em um produto.
+ *
+ * Differe de `avaliacaoResponse` de propósito: a pública traz `nome` e é de
+ * qualquer pessoa, esta traz `produto_id` e é só da conta logada, para o
+ * formulário de avaliação saber o que já está preenchido.
+ */
+export const minhaAvaliacao = z.object({
+  produto_id: z.string(),
+  nota: z.number().int(),
+  comentario: z.string().nullish(),
+  // A data entra porque a regra é "avaliar logo após a compra": a interface
+  // compara com a data do pedido para saber se a janela ainda está aberta.
+  criado_em: z.string().nullish(),
+});
+export type MinhaAvaliacao = z.infer<typeof minhaAvaliacao>;
+
 export const conta = z.object({
   perfil,
   pedidos: listaPedidosUsuario,
   favoritos: z.array(produtoSemCategoria),
+  minhasAvaliacoes: z.array(minhaAvaliacao),
 });
 export type Conta = z.infer<typeof conta>;
 
@@ -268,6 +286,10 @@ export type EnderecoSalvoResponse = z.infer<typeof enderecoSalvoResponse>;
 // ── Localização ────────────────────────────────────────────────────────────
 
 export const cepResponse = z.object({
+  // O geocoding reverso costuma devolver o `postcode`, mas nem sempre: fora do
+  // Brasil o campo não existe. String vazia em vez de `null` porque o
+  // formulário de endereço já trata campo ausente como string vazia.
+  cep: z.string(),
   rua: z.string(),
   bairro: z.string(),
   cidade: z.string(),

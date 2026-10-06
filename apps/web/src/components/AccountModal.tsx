@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Heart } from "lucide-react";
-import type { Conta, UsuarioPublico } from "@loja/shared";
+import type { CepResponse, Conta, UsuarioPublico } from "@loja/shared";
 import { formatarMoeda, imagemDe } from "../lib/utils.js";
 
 type AccountModalProps = {
@@ -8,6 +8,12 @@ type AccountModalProps = {
   dadosConta: Conta | null;
   onFechar: () => void;
   onSalvarEndereco: (endereco: Record<string, string>) => Promise<void>;
+  /**
+   * Endereço vindo da geolocalização, quando a pessoa autorizou. Só entra nos
+   * campos que estão vazios: um endereço já salvo é uma escolha dela e o
+   * geocoding devolve a rua do quarteirão, que perderia número e complemento.
+   */
+  enderecoSugerido?: CepResponse | null;
   onDesfavoritar: (produtoId: string) => void;
   /**
    * Recebe o **id**, e não o produto. O favorito chega aqui sem a `categoria`
@@ -34,6 +40,7 @@ export function AccountModal({
   dadosConta,
   onFechar,
   onSalvarEndereco,
+  enderecoSugerido,
   onDesfavoritar,
   onAbrirProduto,
   onMensagem,
@@ -46,6 +53,26 @@ export function AccountModal({
   const [cidade, setCidade] = useState(dadosConta?.perfil.cidade ?? "");
   const [estado, setEstado] = useState(dadosConta?.perfil.estado ?? "");
   const [salvando, setSalvando] = useState(false);
+
+  // O endereço detectado chega depois do primeiro render, então o preenchimento
+  // acontece em efeito. Só o que está vazio: quem já tem rua e número
+  // cadastrados não deve ver o formulário sobrescrito pela rua do quarteirão,
+  // que vem sem número e sem complemento.
+  //
+  // O `jaPreenchiu` corta o efeito na segunda passada. Sem ele, o efeito roda
+  // de novo a cada tecla nos campos, porque eles estão na lista de dependências
+  // — aí uma detecção atrasada sobrescreveria o que a pessoa já começou a
+  // digitar.
+  const jaPreenchiu = useRef(false);
+  useEffect(() => {
+    if (!enderecoSugerido || jaPreenchiu.current) return;
+    jaPreenchiu.current = true;
+    if (!cep && enderecoSugerido.cep) setCep(enderecoSugerido.cep);
+    if (!rua && enderecoSugerido.rua) setRua(enderecoSugerido.rua);
+    if (!bairro && enderecoSugerido.bairro) setBairro(enderecoSugerido.bairro);
+    if (!cidade && enderecoSugerido.cidade) setCidade(enderecoSugerido.cidade);
+    if (!estado && enderecoSugerido.estado) setEstado(enderecoSugerido.estado);
+  }, [enderecoSugerido, cep, rua, bairro, cidade, estado]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

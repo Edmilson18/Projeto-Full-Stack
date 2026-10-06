@@ -1,4 +1,4 @@
-import type { ProdutoResponse } from "@loja/shared";
+import type { MinhaAvaliacao, PedidoResponse, ProdutoResponse } from "@loja/shared";
 
 const imagensPadrao = [
   "https://images.unsplash.com/photo-1518770660439-4636190af475?auto=format&fit=crop&w=900&q=80",
@@ -41,3 +41,56 @@ export const normalizar = (texto: string) =>
  */
 export const imagemDe = (produto: Pick<ProdutoResponse, "imagem">, indice = 0): string =>
   produto.imagem ?? imagensPadrao[indice % imagensPadrao.length] ?? imagensPadrao[0]!;
+
+/**
+ * Data da última compra do produto que não foi cancelada, em milissegundos.
+ *
+ * `Date.parse` e não comparação de texto: as duas datas vêm do mesmo banco e
+ * no mesmo formato, mas comparar string ISO funciona só por acidente enquanto
+ * os formatos coincidirem.
+ */
+function ultimaCompra(pedidos: readonly PedidoResponse[], produtoId: string): number | null {
+  const datas = pedidos
+    .filter(
+      (pedido) =>
+        pedido.status !== "cancelado" &&
+        (pedido.criado_em ?? "") !== "" &&
+        (pedido.itens ?? []).some((item) => item.produto_id === produtoId),
+    )
+    .map((pedido) => Date.parse(pedido.criado_em ?? ""))
+    .filter((tempo) => !Number.isNaN(tempo));
+
+  return datas.length > 0 ? Math.max(...datas) : null;
+}
+
+/**
+ * Diz se a pessoa pode avaliar o produto **agora**.
+ *
+ * Avaliar não é um direito permanente de quem comprou uma vez: é uma janela que
+ * abre a cada compra e fecha assim que a nota é enviada. Comprou e nunca
+ * avaliou, pode. Avaliou, não pode de novo — a menos que compre outra vez, e
+ * aí a janela reabre para atualizar a nota.
+ *
+ * Por isso a comparação é entre a data da última compra e a data da avaliação,
+ * e não apenas "tem compra registrada". Sem isso, o mesmo produto aceitaria
+ * nota nova toda vez que a pessoa recarregasse a página.
+ *
+ * Espelha `podeAvaliarProduto` no servidor. O servidor é quem decide de
+ * verdade; isto serve para o formulário aparecer travado com o motivo, e não
+ * escondido — escondido a pessoa conclui que a página quebrou.
+ */
+export const podeAvaliar = (
+  pedidos: readonly PedidoResponse[],
+  minhasAvaliacoes: readonly MinhaAvaliacao[],
+  produtoId: string,
+): boolean => {
+  const compra = ultimaCompra(pedidos, produtoId);
+  if (compra === null) return false;
+
+  const minha = minhasAvaliacoes.find((avaliacao) => avaliacao.produto_id === produtoId);
+  const avaliouEm = minha?.criado_em ? Date.parse(minha.criado_em) : Number.NaN;
+
+  // Sem avaliação registrada, ou com avaliação anterior à última compra, a
+  // janela está aberta.
+  return Number.isNaN(avaliouEm) || avaliouEm < compra;
+};

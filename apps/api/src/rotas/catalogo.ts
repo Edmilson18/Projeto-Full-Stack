@@ -25,6 +25,7 @@ import {
   inativarProduto,
   inserirProduto,
   listarAvaliacoes,
+  listarAvaliacoesDoUsuario,
   listarCategorias,
   listarCuponsAtivos,
   listarFavoritos,
@@ -35,6 +36,7 @@ import {
   salvarAvaliacao,
   atualizarEnderecoUsuario,
   atualizarProduto,
+  podeAvaliarProduto,
 } from "../database.js";
 import { ErroApp } from "../erros.js";
 import { exigirAdmin, exigirSessao } from "./auth.js";
@@ -92,6 +94,9 @@ export async function registrarRotasCatalogo(app: FastifyInstance) {
     return conta.parse({
       perfil: await buscarPerfilUsuario(usuario.id),
       pedidos: await listarPedidosDoUsuario(usuario.id),
+      // Permite à interface reconhecer a própria avaliação e oferecer
+      // "atualizar" em vez de pedir uma segunda vez.
+      minhasAvaliacoes: await listarAvaliacoesDoUsuario(usuario.id),
       favoritos: (await listarFavoritos(usuario.id)).map((linha) => ({
         ...linha,
         preco: Number(linha.preco ?? 0),
@@ -137,6 +142,17 @@ export async function registrarRotasCatalogo(app: FastifyInstance) {
 
     // Mesma razão do favorito: `avaliacoes.produto_id` é chave estrangeira.
     await exigirProdutoExistente(produtoId);
+
+    // Avaliação é uma janela que abre a cada compra e fecha ao avaliar.
+    // A checagem mora aqui e não na interface porque a interface é só a
+    // casca: qualquer um pode chamar a rota direto pelo `fetch`, e sem esta
+    // linha a mesma pessoa avaliaria o mesmo produto quantas vezes quisesse.
+    if (!(await podeAvaliarProduto(usuario.id, produtoId))) {
+      throw ErroApp.semPermissao(
+        "Você já avaliou este produto. A avaliação só fica disponível logo após uma nova compra.",
+        "avaliacao_fora_da_janela",
+      );
+    }
 
     await salvarAvaliacao(usuario.id, produtoId, entrada.nota, entrada.comentario);
     reply.code(201);

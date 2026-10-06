@@ -6,6 +6,20 @@ type ProductModalProps = {
   produto: ProdutoResponse;
   usuario: UsuarioPublico | null;
   avaliacoes: AvaliacaoResponse[];
+  /**
+   * Posição do produto no catálogo cheio, usada só para escolher a foto quando
+   * o produto não tem `imagem` no banco.
+   *
+   * Sem isto o modal caía sempre no índice 0 e mostrava a mesma foto para todo
+   * produto — era o que fazia a câmera de segurança aparecer com a foto de um
+   * relógio.
+   */
+  indice?: number;
+  /**
+   * A pessoa já comprou este produto? Avaliação é restrita a quem comprou, e a
+   * interface mostra o motivo quando a resposta é não.
+   */
+  podeAvaliar?: boolean;
   onFechar: () => void;
   onAdicionarAoCarrinho: (produto: ProdutoResponse) => void;
   onEnviarAvaliacao: (produtoId: string, nota: number, comentario: string) => Promise<void>;
@@ -17,6 +31,8 @@ export function ProductModal({
   produto,
   usuario,
   avaliacoes,
+  indice = 0,
+  podeAvaliar = false,
   onFechar,
   onAdicionarAoCarrinho,
   onEnviarAvaliacao,
@@ -51,8 +67,9 @@ export function ProductModal({
           ×
         </button>
         <div className="modal-grid">
-          <img src={imagemDe(produto)} alt={produto.nome} />
-          <div>
+          <img src={imagemDe(produto, indice)} alt={produto.nome} />
+          {/* `modal-info` é a coluna que rola; a foto ao lado fica fixa. */}
+          <div className="modal-info">
             <span className="tag">{produto.categoria}</span>
             <h3>{produto.nome}</h3>
             <p className="modal-price">{formatarMoeda(produto.preco)}</p>
@@ -82,7 +99,19 @@ export function ProductModal({
               ) : (
                 <p className="review-empty">Ainda não há avaliações para este produto.</p>
               )}
-              {usuario ? (
+              {!usuario ? (
+                <button className="secondary-btn" type="button" onClick={handleEnviarAvaliacao}>
+                  Entre para avaliar
+                </button>
+              ) : !podeAvaliar ? (
+                /* Mostrar o motivo em vez de sumir com o formulário: sem
+                   isto a pessoa acha que a página quebrou, e não tem como
+                   entender que existe uma regra. */
+                <p className="review-locked">
+                  <strong>Avalie este produto</strong>A avaliação fica disponível logo após a compra. Você já avaliou
+                  este produto — compre de novo para atualizar sua nota.
+                </p>
+              ) : (
                 <>
                   <strong>Avalie este produto</strong>
                   <div>
@@ -108,10 +137,6 @@ export function ProductModal({
                     {enviando ? "Enviando..." : "Enviar avaliação"}
                   </button>
                 </>
-              ) : (
-                <button className="secondary-btn" type="button" onClick={handleEnviarAvaliacao}>
-                  Entre para avaliar
-                </button>
               )}
             </div>
             <button

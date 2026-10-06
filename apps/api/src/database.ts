@@ -954,6 +954,25 @@ export async function listarAvaliacoes(produtoId: string) {
   });
 }
 
+/**
+ * Avaliações que a pessoa já deixou, para o formulário vir preenchido.
+ *
+ * `listarAvaliacoes` é pública e devolve `nome` em vez de id, então a interface
+ * não tem como reconhecer a própria opinião — e nome não serve, porque duas
+ * pessoas podem ter o mesmo. Esta consulta é da conta, que já exige sessão, e
+ * por isso devolve o id: é o que permite mostrar "atualizar avaliação" com a
+ * nota anterior em vez de pedir uma nova.
+ */
+export async function listarAvaliacoesDoUsuario(usuarioId: string) {
+  return emTransacao(async (client) => {
+    const resultado = await client.query(
+      `SELECT produto_id, nota, comentario, criado_em FROM avaliacoes WHERE usuario_id = $1`,
+      [usuarioId],
+    );
+    return resultado.rows.map((linha) => ({ ...linha, criado_em: iso(linha.criado_em) }));
+  });
+}
+
 export async function salvarAvaliacao(usuarioId: string, produtoId: string, nota: number, comentario: string) {
   await emTransacao(async (client) => {
     await client.query(
@@ -963,6 +982,49 @@ export async function salvarAvaliacao(usuarioId: string, produtoId: string, nota
        DO UPDATE SET nota = EXCLUDED.nota, comentario = EXCLUDED.comentario, criado_em = now()`,
       [randomUUID(), usuarioId, produtoId, nota, comentario],
     );
+  });
+}
+
+/**
+ * Diz se a pessoa pode avaliar o produto **agora**.
+ *
+ * Não basta ter comprado: avaliar é uma janela que abre a cada compra e fecha
+ * assim que a pessoa avalia. Por isso a comparação é entre a data da última
+ * compra e a data da avaliação:
+ *
+ * - comprou e nunca avaliou            → liberada
+ * - comprou, avaliou, não comprou mais  → bloqueada
+ * - comprou de novo depois de avaliar  → liberada de novo, para atualizar a nota
+ *
+ * Comprado `cancelado` não conta em nenhum dos casos. `EXISTS` sobre a última
+ * compra devolveria "comprou" para sempre, que é justamente o que a regra
+ * proíbe: o mesmo produto com avaliação feita não pode ser avaliado de novo
+ * só porque a pessoa abriu a página.
+ *
+ * O `-infinity` é o caso de nunca ter avaliado, que precisa contar como mais
+ * antigo que qualquer compra. O resultado sai direto como booleano.
+ */
+export async function podeAvaliarProduto(usuarioId: string, produtoId: string): Promise<boolean> {
+  return emTransacao(async (client) => {
+    const resultado = await client.query(
+      `SELECT (
+         c.em IS NOT NULL
+         AND COALESCE(a.criado_em, '-infinity'::timestamptz) < c.em
+       ) AS pode
+       FROM (
+         SELECT max(p.criado_em) AS em
+           FROM itens_pedido i
+           INNER JOIN pedidos p ON p.id = i.pedido_id
+          WHERE i.produto_id = $1
+            AND p.usuario_id = $2
+            AND p.status <> 'cancelado'
+       ) c
+       LEFT JOIN (
+         SELECT criado_em FROM avaliacoes WHERE usuario_id = $2 AND produto_id = $1
+       ) a ON true`,
+      [produtoId, usuarioId],
+    );
+    return resultado.rows[0]?.pode ?? false;
   });
 }
 

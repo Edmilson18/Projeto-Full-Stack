@@ -313,6 +313,172 @@ describe("produtos", () => {
   });
 });
 
+describe("avaliação abre a cada compra e fecha ao avaliar", () => {
+  /**
+   * A trava precisa valer no servidor. A interface esconder o formulário é
+   * conveniência, não proteção: qualquer um pode chamar `POST /api/avaliacoes`
+   * direto, e sem a checagem aqui a mesma pessoa avaliaria o mesmo produto
+   * quantas vezes quisesse.
+   */
+  it("recusa a avaliação de quem nunca comprou o produto", async () => {
+    const cliente = await clienteComum();
+
+    const resposta = await cliente.post("/api/avaliacoes/prod-monitor", { nota: 1, comentario: "spam" });
+
+    expect(resposta.status).toBe(403);
+    expect(resposta.corpo.erro).toMatch(/após uma nova compra/i);
+  });
+
+  it("aceita a avaliação logo depois da compra", async () => {
+    const cliente = await clienteComum();
+    const compra = await cliente.post("/api/pedidos", {
+      itens: [{ produtoId: "prod-cam", quantidade: 1 }],
+      metodoPagamento: "pix",
+    });
+    expect(compra.status).toBe(201);
+
+    const resposta = await cliente.post("/api/avaliacoes/prod-cam", { nota: 5, comentario: "Ótima câmera" });
+
+    expect(resposta.status).toBe(201);
+  });
+
+  it("conta a compra em qualquer pedido que não esteja cancelado", async () => {
+    const cliente = await clienteComum();
+    await cliente.post("/api/pedidos", {
+      itens: [{ produtoId: "prod-headset", quantidade: 1 }],
+      metodoPagamento: "pix",
+    });
+
+    // Pedido em `processando` já libera: exigir a mercadoria entregue jogaria
+    // fora a avaliação fresca, que é a que diz algo sobre a experiência atual.
+    const resposta = await cliente.post("/api/avaliacoes/prod-headset", { nota: 4, comentario: "" });
+
+    expect(resposta.status).toBe(201);
+  });
+
+  it("não aceita avaliar um produto diferente do que foi comprado", async () => {
+    const cliente = await clienteComum();
+    await cliente.post("/api/pedidos", { itens: [{ produtoId: "prod-mouse", quantidade: 1 }], metodoPagamento: "pix" });
+
+    const resposta = await cliente.post("/api/avaliacoes/prod-teclado", { nota: 5, comentario: "" });
+
+    expect(resposta.status).toBe(403);
+  });
+
+  it("ignora pedido cancelado", async () => {
+    const cliente = await clienteComum();
+    const compra = await cliente.post("/api/pedidos", {
+      itens: [{ produtoId: "prod-cadeira", quantidade: 1 }],
+      metodoPagamento: "pix",
+    });
+
+    const admin = novo();
+    await admin.post("/api/login", ADMIN);
+    const cancelamento = await admin.patch(`/api/admin/pedidos/${compra.corpo.pedido.id}`, {
+      status: "cancelado",
+    });
+    expect(cancelamento.status).toBe(200);
+
+    const resposta = await cliente.post("/api/avaliacoes/prod-cadeira", { nota: 5, comentario: "" });
+
+    expect(resposta.status).toBe(403);
+  });
+
+  it("devolve as próprias avaliações na conta, com id e data", async () => {
+    const cliente = await clienteComum();
+    await cliente.post("/api/pedidos", { itens: [{ produtoId: "prod-cam", quantidade: 1 }], metodoPagamento: "pix" });
+    await cliente.post("/api/avaliacoes/prod-cam", { nota: 2, comentario: "Deu problema" });
+
+    const conta = await cliente.get("/api/conta");
+
+    // A rota pública de avaliações devolve `nome` em vez de id, e nome não
+    // identifica ninguém. É esta lista, que vem da conta com sessão, que
+    // permite reconhecer a própria avaliação — e a `criado_em` é o que fecha
+    // a janela, comparando com a data da última compra.
+    expect(conta.corpo.minhasAvaliacoes).toHaveLength(1);
+    expect(conta.corpo.minhasAvaliacoes[0]).toMatchObject({
+      produto_id: "prod-cam",
+      nota: 2,
+      comentario: "Deu problema",
+    });
+    expect(conta.corpo.minhasAvaliacoes[0].criado_em).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+  });
+
+  it("bloqueia uma segunda avaliação depois da primeira", async () => {
+    const cliente = await clienteComum();
+    await cliente.post("/api/pedidos", {
+      itens: [{ produtoId: "prod-monitor", quantidade: 1 }],
+      metodoPagamento: "pix",
+    });
+
+    const primeira = await cliente.post("/api/avaliacoes/prod-monitor", { nota: 4, comentario: "" });
+    expect(primeira.status).toBe(201);
+
+    // Esta é a regra: a janela fecha ao avaliar. Sem nova compra, a segunda
+    // tentativa é recusada — era exatamente o que faltava.
+    const segunda = await cliente.post("/api/avaliacoes/prod-monitor", { nota: 1, comentario: "mudei de ideia" });
+
+    expect(segunda.status).toBe(403);
+  });
+
+  it("reabre a janela com uma nova compra, para atualizar a nota", async () => {
+    const cliente = await clienteComum();
+    await cliente.post("/api/pedidos", { itens: [{ produtoId: "prod-cam", quantidade: 1 }], metodoPagamento: "pix" });
+    await cliente.post("/api/avaliacoes/prod-cam", { nota: 1, comentario: "Acho ruim" });
+
+    const semCompraNova = await cliente.post("/api/avaliacoes/prod-cam", { nota: 5, comentario: "" });
+    expect(semCompraNova.status).toBe(403);
+
+    await cliente.post("/api/pedidos", { itens: [{ produtoId: "prod-cam", quantidade: 1 }], metodoPagamento: "pix" });
+
+    const comCompraNova = await cliente.post("/api/avaliacoes/prod-cam", {
+      nota: 5,
+      comentario: "Depois de trocar, ótimo",
+    });
+
+    expect(comCompraNova.status).toBe(201);
+  });
+
+  it("atualizar a avaliação substitui a anterior, sem criar uma segunda", async () => {
+    const cliente = await clienteComum();
+    await cliente.post("/api/pedidos", { itens: [{ produtoId: "prod-cam", quantidade: 1 }], metodoPagamento: "pix" });
+
+    // A lista pública é compartilhada entre os testes deste arquivo — outros
+    // casos também avaliam `prod-cam` — então o que importa é que a contagem
+    // suba 1, não que valha 1.
+    const antes = await cliente.get("/api/avaliacoes/prod-cam");
+
+    await cliente.post("/api/avaliacoes/prod-cam", { nota: 1, comentario: "Acho ruim" });
+    await cliente.post("/api/pedidos", { itens: [{ produtoId: "prod-cam", quantidade: 1 }], metodoPagamento: "pix" });
+    await cliente.post("/api/avaliacoes/prod-cam", { nota: 5, comentario: "Depois de trocar, ótimo" });
+
+    const depois = await cliente.get("/api/avaliacoes/prod-cam");
+    // Duas compras, duas avaliações, mas uma linha a mais: a segunda
+    // substituiu a primeira.
+    expect(depois.corpo).toHaveLength(antes.corpo.length + 1);
+
+    const conta = await cliente.get("/api/conta");
+    const minhas = conta.corpo.minhasAvaliacoes.filter((a: { produto_id: string }) => a.produto_id === "prod-cam");
+    expect(minhas).toHaveLength(1);
+    expect(minhas[0]).toMatchObject({ nota: 5, comentario: "Depois de trocar, ótimo" });
+  });
+
+  it("exige login antes de qualquer coisa", async () => {
+    const resposta = await novo().post("/api/avaliacoes/prod-monitor", { nota: 5, comentario: "" });
+    expect(resposta.status).toBe(401);
+  });
+
+  it("não deixa a avaliação recusada aparecer na lista", async () => {
+    const cliente = await clienteComum();
+    const antes = await cliente.get("/api/avaliacoes/prod-monitor");
+
+    await cliente.post("/api/avaliacoes/prod-monitor", { nota: 1, comentario: "spam" });
+
+    const depois = await cliente.get("/api/avaliacoes/prod-monitor");
+    expect(depois.corpo).toEqual(antes.corpo);
+  });
+});
+
 describe("pedidos pela API", () => {
   it("exige login para finalizar a compra", async () => {
     const resposta = await novo().post("/api/pedidos", { itens: [{ produtoId: "prod-teclado", quantidade: 1 }] });

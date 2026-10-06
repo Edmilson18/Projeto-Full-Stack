@@ -7,6 +7,28 @@ import { cepResponse } from "@loja/shared";
  * Serviço gratuito que não requer API key.
  * Documentaçao: https://viacep.com.br/
  */
+/**
+ * Extrai a sigla do estado a partir do código de subdivisão do Nominatim.
+ *
+ * Com `addressdetails=1` ele devolve `ISO3166-2-lvl4` como `BR-SP`, que é o
+ * único campo com a sigla. O `state` traz o nome por extenso ("São Paulo"), e
+ * o schema de endereço exige duas letras — mandar o nome inteiro faria o
+ * preenchimento automático falhar na hora de salvar.
+ *
+ * Sem o código de subdivisão, resta o `state`: se já vierem duas letras serve
+ * como está, e um nome extenso vira string vazia, que o formulário trata como
+ * campo a preencher à mão.
+ */
+function ufDe(subdivisao: string | undefined, estado: string | undefined): string {
+  if (subdivisao) {
+    const partes = subdivisao.split("-");
+    const sigla = partes.at(-1);
+    if (sigla && /^[A-Za-z]{2}$/.test(sigla)) return sigla.toUpperCase();
+  }
+  if (estado && /^[A-Za-z]{2}$/.test(estado)) return estado.toUpperCase();
+  return "";
+}
+
 export async function registrarRotasLocalizacao(app: FastifyInstance) {
   app.get("/api/cep/:cep", async (req, reply) => {
     const { cep } = req.params as { cep: string };
@@ -25,6 +47,7 @@ export async function registrarRotasLocalizacao(app: FastifyInstance) {
 
       const dados = (await resposta.json()) as {
         erro?: string;
+        cep?: string;
         logradouro?: string;
         bairro?: string;
         localidade?: string;
@@ -36,6 +59,7 @@ export async function registrarRotasLocalizacao(app: FastifyInstance) {
       }
 
       return cepResponse.parse({
+        cep: dados.cep ?? cepLimpo,
         rua: dados.logradouro ?? "",
         bairro: dados.bairro ?? "",
         cidade: dados.localidade ?? "",
@@ -92,12 +116,15 @@ export async function registrarRotasLocalizacao(app: FastifyInstance) {
 
       const dados = (await resposta.json()) as {
         address?: {
+          postcode?: string;
           road?: string;
           suburb?: string;
           city?: string;
           town?: string;
           village?: string;
+          municipality?: string;
           state?: string;
+          "ISO3166-2-lvl4"?: string;
         };
       };
 
@@ -107,10 +134,11 @@ export async function registrarRotasLocalizacao(app: FastifyInstance) {
       }
 
       return cepResponse.parse({
+        cep: endereco.postcode ?? "",
         rua: endereco.road ?? "",
         bairro: endereco.suburb ?? "",
-        cidade: endereco.city ?? endereco.town ?? endereco.village ?? "",
-        estado: endereco.state ?? "",
+        cidade: endereco.municipality ?? endereco.city ?? endereco.town ?? endereco.village ?? "",
+        estado: ufDe(endereco["ISO3166-2-lvl4"], endereco.state),
       });
     } catch {
       return reply.code(502).send({ erro: "Não foi possível consultar o serviço de localização." });

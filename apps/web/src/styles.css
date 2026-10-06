@@ -14,6 +14,11 @@
   --primary-dark: #303c4a;
   --text: #17202b;
   --shadow: 0 18px 38px rgba(23, 32, 43, 0.12);
+  /* Cor do polegar da rolagem dentro das telas sobrepostas. Fica quase invisível
+     em repouso e só ganha corpo quando o mouse está na área que rola. O tema
+     escuro sobrescreve isto mais abaixo. */
+  --rolagem: transparent;
+  --rolagem-ativa: rgba(23, 32, 43, 0.2);
   font-family: "Manrope", sans-serif;
   color: var(--ink);
   background: var(--paper);
@@ -29,6 +34,100 @@ html {
 body {
   min-width: 320px;
   background: var(--paper);
+}
+
+/* ── Overlay: trava a página de fundo ────────────────────────────────────────
+
+   Sem isto, a roda do mouse sobre um modal rolava a página por baixo: o
+   modal aparecia parado e o conteúdo sumia por cima dele, o que fazia a
+   rolagem parecer "travada" mesmo estando solta.
+
+   O seletor lista os três backdrops porque cada tela abriu o seu:
+   `modal-backdrop` (produto, conta, login), `cart-backdrop` (carrinho) e
+   `confirm-backdrop` (confirmações). Ao adicionar uma tela nova, é aqui que o
+   backdrop entra.
+
+   `:has()` lê o DOM já montado, então a trava some sozinha quando o último
+   overlay fecha — não há estado de "modal aberto" para desalinhar em
+   TypeScript. */
+html:has(.modal-backdrop, .cart-backdrop, .confirm-backdrop),
+body:has(.modal-backdrop, .cart-backdrop, .confirm-backdrop) {
+  overflow: hidden;
+}
+
+/* ── Barra de rolagem discreta dentro dos overlays ───────────────────────────
+
+   A barra padrão do Windows é uma calha cinza de 17px encostada no card, e
+   dentro de um modal branco ela chama mais atenção que o próprio conteúdo.
+
+   Aqui ela é quase invisível: 6px de largura, sem trilho, e o polegar só
+   aparece quando o mouse está sobre a área que rola — que é justamente quando
+   a pessoa está rolando, então o desenho foi feito para não competir com o
+   texto.
+
+   Não some de todo jeito. O polegar é a única pista de que há mais conteúdo
+   abaixo da dobra, e sem ele a única forma de descobrir o formulário de
+   avaliação, lá no fim da coluna, seria rolar às cegas.
+
+   O `scrollbar-width`/`scrollbar-color` são do Firefox, que ignora os
+   pseudo-elementos do WebKit. Sem os dois blocos, cada navegador exibiria um
+   comportamento diferente. */
+.modal,
+.modal-info,
+.account-modal,
+.login-prompt-modal,
+.cart-panel,
+.confirm-dialog,
+.rate-dialog {
+  scrollbar-width: thin;
+  scrollbar-color: var(--rolagem) transparent;
+  transition: scrollbar-color 0.25s ease;
+}
+.modal:hover,
+.modal-info:hover,
+.account-modal:hover,
+.login-prompt-modal:hover,
+.cart-panel:hover,
+.confirm-dialog:hover,
+.rate-dialog:hover {
+  scrollbar-color: var(--rolagem-ativa) transparent;
+}
+.modal::-webkit-scrollbar,
+.modal-info::-webkit-scrollbar,
+.account-modal::-webkit-scrollbar,
+.login-prompt-modal::-webkit-scrollbar,
+.cart-panel::-webkit-scrollbar,
+.confirm-dialog::-webkit-scrollbar,
+.rate-dialog::-webkit-scrollbar {
+  width: 6px;
+}
+.modal::-webkit-scrollbar-track,
+.modal-info::-webkit-scrollbar-track,
+.account-modal::-webkit-scrollbar-track,
+.login-prompt-modal::-webkit-scrollbar-track,
+.cart-panel::-webkit-scrollbar-track,
+.confirm-dialog::-webkit-scrollbar-track,
+.rate-dialog::-webkit-scrollbar-track {
+  background: transparent;
+}
+.modal::-webkit-scrollbar-thumb,
+.modal-info::-webkit-scrollbar-thumb,
+.account-modal::-webkit-scrollbar-thumb,
+.login-prompt-modal::-webkit-scrollbar-thumb,
+.cart-panel::-webkit-scrollbar-thumb,
+.confirm-dialog::-webkit-scrollbar-thumb,
+.rate-dialog::-webkit-scrollbar-thumb {
+  background-color: var(--rolagem);
+  border-radius: 999px;
+}
+.modal:hover::-webkit-scrollbar-thumb,
+.modal-info:hover::-webkit-scrollbar-thumb,
+.account-modal:hover::-webkit-scrollbar-thumb,
+.login-prompt-modal:hover::-webkit-scrollbar-thumb,
+.cart-panel:hover::-webkit-scrollbar-thumb,
+.confirm-dialog:hover::-webkit-scrollbar-thumb,
+.rate-dialog:hover::-webkit-scrollbar-thumb {
+  background-color: var(--rolagem-ativa);
 }
 button,
 input {
@@ -1221,6 +1320,10 @@ nav a {
 }
 .login-prompt-modal {
   width: min(420px, 100%);
+  /* Teto de altura para o mesmo motivo do `.modal`: um texto longo de erro ou
+     um termo de aceite não empurra o diálogo para fora da tela. */
+  max-height: min(90vh, 720px);
+  overflow-y: auto;
   background: var(--paper);
   color: var(--ink);
   border-radius: 20px;
@@ -1291,6 +1394,11 @@ nav a {
 
 .modal {
   width: min(860px, 100%);
+  /* Sem teto de altura, o conteúdo estourado era cortado nas duas pontas —
+     o `place-items: center` do backdrop centraliza e o que passa da viewport
+     fica fora de alcance. O formulário de avaliação fica no fim da coluna e
+     era justamente ele que sumia. Mesmo par do `.account-modal`. */
+  max-height: min(720px, 90vh);
   background: white;
   border-radius: 24px;
   padding: 24px;
@@ -1315,13 +1423,43 @@ nav a {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 24px;
-  align-items: center;
+  /* `align-items: center` centralizava a foto em relação a uma coluna de texto
+     que podia ter o dobro da altura, e o resultado era uma foto miúda no meio
+     de um vão vazio. `stretch` deixa as duas ocuparem a mesma altura. */
+  align-items: stretch;
+  /* Altura fixa nas duas colunas: é ela que segura a foto no lugar. Com a
+     coluna de texto rolando por dentro, a foto não tem por que se mover. O
+     `- 48px` desconta o padding do `.modal` (24px de cada lado).
+
+     Unsplash devolve foto deitada (900x600) e a coluna é alta e estreita. Com
+     `contain` sobra espaço vertical na caixa da foto, então a altura foi
+     calculada para o texto mostrar bastante de uma vez sem sobrar faixa
+     morta grande em volta da imagem. */
+  height: min(460px, calc(90vh - 48px));
+}
+/* Coluna que rola. Só o texto e o formulário de avaliação descem; a foto ao
+   lado fica parada enquanto o conteúdo passa por baixo dela. */
+.modal-info {
+  overflow-y: auto;
+  /* O `min-width: 0` evita que um texto longo (URL, código) estoure a coluna
+     e empurre a grade, já que `1fr` não é `minmax(0, 1fr)` por padrão. */
+  min-width: 0;
 }
 
 .modal-grid img {
   border-radius: 20px;
-  height: 360px;
-  object-fit: cover;
+  /* `contain` e não `cover`: `cover` preenche a caixa cortando as pontas da
+     foto, e aí aparecia uma fatia de um smartwatch no lugar da câmera. Aqui a
+     imagem inteira aparece, sem esticar nem achatar, e o `object-position`
+     padrão (50% 50%) já centraliza.
+     Sem fundo: colorir a sobra deixava duas faixas escuras ocupando quase
+     metade da caixa e a coisa parecia quebrada. O fundo do próprio modal é o
+     palco, e a borda fininha só marca onde termina a área da foto. */
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  object-position: center;
+  border: 1px solid var(--line);
 }
 
 .modal-grid h3 {
@@ -1366,6 +1504,23 @@ nav a {
   .hero,
   .modal-grid {
     grid-template-columns: 1fr;
+  }
+
+  /* Em uma coluna só não existe "coluna ao lado para a foto ficar": a foto vai
+     acima do texto, e as duas precisam descer juntas. Por isso a rolagem
+     volta a ser do modal inteiro, e a altura fixa das colunas é desfeita. */
+  .modal {
+    overflow-y: auto;
+  }
+  .modal-grid {
+    height: auto;
+    align-items: start;
+  }
+  .modal-grid img {
+    height: 220px;
+  }
+  .modal-info {
+    overflow-y: visible;
   }
 
   nav {
@@ -1682,6 +1837,19 @@ nav a {
 }
 .review-form .secondary-btn {
   justify-content: center;
+  /* O fundo herdado (#edf3ff) ficava quase branco sobre o modal branco e o
+     botão sumia no modo claro. Aqui o fundo vem do painel, a cor do texto é
+     fixada e a borda dá o contorno que faltava. No escuro o bloco
+     `[data-tema="escuro"] .secondary-btn` vem depois no arquivo e continua
+     valendo. */
+  background: var(--panel);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  font-weight: 700;
+}
+.review-form .secondary-btn:hover:not(:disabled) {
+  background: var(--paper);
+  border-color: var(--muted);
 }
 .review-list {
   display: grid;
@@ -1709,6 +1877,24 @@ nav a {
   font-size: 0.75rem;
   line-height: 1.45;
 }
+/* Formulário de avaliação travado para quem não comprou. O `dashed` distingue
+   "bloqueado com motivo" de "quebrado", e a margem inferior alinha a borda com
+   o botão que aparece no lugar do formulário. */
+.review-locked {
+  margin: 0;
+  padding: 13px 14px;
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+  color: var(--muted);
+  font-size: 0.88rem;
+  line-height: 1.6;
+}
+.review-locked strong {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--ink);
+}
+
 .review-empty {
   color: var(--muted);
   font-size: 0.75rem;
@@ -1980,6 +2166,9 @@ nav a {
   --primary: #c7ef65;
   --primary-dark: #a9d847;
   --shadow: 0 18px 38px rgba(0, 0, 0, 0.3);
+  /* Um polegar escuro sobre painel escuro é invisível, e pior: some na
+     dobra justamente onde a pessoa precisa saber que há mais conteúdo. */
+  --rolagem-ativa: rgba(246, 244, 237, 0.24);
 }
 [data-tema="escuro"] body {
   background: var(--paper);
@@ -2102,8 +2291,105 @@ nav a {
   padding: 20px;
   background: rgba(23, 32, 43, 0.65);
 }
+/* ── Avaliação logo após a compra ─────────────────────────────────────────── */
+.rate-dialog {
+  width: min(520px, 100%);
+  max-height: min(90vh, 720px);
+  overflow-y: auto;
+  padding: 30px;
+  background: var(--panel);
+  color: var(--ink);
+  border-radius: 20px;
+  box-shadow: var(--shadow);
+  position: relative;
+}
+.rate-intro {
+  margin-top: 6px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+.rate-list {
+  display: grid;
+  gap: 12px;
+  margin: 20px 0;
+}
+.rate-item {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.rate-stars {
+  display: flex;
+  gap: 4px;
+}
+/* A estrela é o controle, então precisa de área clicável de verdade: 26px de
+   ícone com 4px de folga fica abaixo do alvo de 40px recomendado. O `padding`
+   aumenta sem esticar o ícone. */
+.rate-star {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--line);
+  cursor: pointer;
+  transition:
+    color 0.15s ease,
+    background 0.15s ease;
+}
+.rate-star:hover {
+  background: var(--paper);
+  color: var(--muted);
+}
+.rate-star.ligada {
+  color: var(--primary);
+}
+/* Produto que a pessoa já avaliou: a borda muda e o texto diz qual é a nota
+   atual, para ela entender que está corrigindo e não avaliando de novo. */
+.rate-item.reavaliando {
+  border-color: var(--primary);
+  background: var(--paper);
+}
+.rate-reevaliar {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+.rate-item textarea {
+  width: 100%;
+  min-height: 58px;
+  padding: 9px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--paper);
+  color: var(--ink);
+  resize: vertical;
+}
+.rate-actions {
+  display: grid;
+  grid-template-columns: 1fr 2fr;
+  gap: 10px;
+}
+.rate-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+.rate-erro {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--coral);
+  border-radius: 8px;
+  color: var(--coral);
+  font-size: 0.85rem;
+}
 .confirm-dialog {
   width: min(410px, 100%);
+  max-height: min(90vh, 720px);
+  overflow-y: auto;
   padding: 30px;
   background: var(--panel);
   color: var(--ink);
