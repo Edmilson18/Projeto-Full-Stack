@@ -1,6 +1,7 @@
 import { escopoSessaoAtual, EVENTO_SESSAO_EXPIRADA } from "./sessao.js";
 
 const BASE_URL = "/api";
+const ERRO_CONEXAO = "Não foi possível conectar ao servidor. Verifique sua conexão e tente novamente.";
 
 export class ApiError extends Error {
   constructor(
@@ -19,11 +20,16 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
   const hasBody = options?.body !== undefined && options?.body !== null;
   const headers = new Headers(options?.headers);
   if (hasBody && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
-  const resposta = await fetch(`${BASE_URL}${url}`, {
-    ...options,
-    headers,
-    credentials: "include",
-  });
+  let resposta: Response;
+  try {
+    resposta = await fetch(`${BASE_URL}${url}`, {
+      ...options,
+      headers,
+      credentials: "include",
+    });
+  } catch {
+    throw new ApiError(0, ERRO_CONEXAO);
+  }
 
   const dados = await resposta.json().catch(() => ({}));
 
@@ -31,7 +37,20 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
     if (resposta.status === 401 && url !== "/login" && escopo === escopoSessaoAtual()) {
       window.dispatchEvent(new Event(EVENTO_SESSAO_EXPIRADA));
     }
-    throw new ApiError(resposta.status, dados.erro || "Erro inesperado");
+    const mensagem = typeof dados.erro === "string" ? dados.erro : "";
+    if (resposta.status === 429 || /rate limit exceeded|too many requests/i.test(mensagem)) {
+      throw new ApiError(429, "Você fez muitas tentativas. Aguarde um minuto e tente novamente.");
+    }
+    if (/failed to fetch|networkerror|load failed|fetch failed|network request failed/i.test(mensagem)) {
+      throw new ApiError(resposta.status, ERRO_CONEXAO);
+    }
+    throw new ApiError(
+      resposta.status,
+      mensagem ||
+        (resposta.status >= 500
+          ? "Ocorreu um erro no servidor. Tente novamente."
+          : "Não foi possível concluir a solicitação."),
+    );
   }
 
   return dados as T;

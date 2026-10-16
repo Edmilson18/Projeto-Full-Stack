@@ -52,3 +52,32 @@ describe("expiração da sessão nas requisições", () => {
     }
   });
 });
+
+describe("mensagens de erro da API", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("mostra o limite de tentativas em português mesmo se o servidor responder em inglês", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue(
+          new Response(JSON.stringify({ erro: "Rate limit exceeded, retry in 1 minute" }), { status: 429 }),
+        ),
+    );
+
+    await expect(api.post("/login", { email: "a@exemplo.com", senha: "incorreta" })).rejects.toMatchObject({
+      status: 429,
+      message: "Você fez muitas tentativas. Aguarde um minuto e tente novamente.",
+    });
+  });
+
+  it("traduz falha de conexão para uma mensagem clara", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));
+
+    await expect(api.get("/conta")).rejects.toMatchObject({
+      status: 0,
+      message: "Não foi possível conectar ao servidor. Verifique sua conexão e tente novamente.",
+    });
+  });
+});

@@ -154,16 +154,20 @@ export function criarApp(opcoes: OpcoesApp = {}) {
       return reply.code(erro.status).send({ erro: erro.message });
     }
 
-    // Erros do próprio Fastify (payload grande, JSON malformado) trazem
-    // `statusCode`. Eles são do cliente, não do servidor, e a mensagem pode
-    // ser repassada.
-    const possivelHttp = erro as { statusCode?: unknown; message?: unknown };
-    if (
-      typeof possivelHttp.statusCode === "number" &&
-      possivelHttp.statusCode < 500 &&
-      typeof possivelHttp.message === "string"
-    ) {
-      return reply.code(possivelHttp.statusCode).send({ erro: possivelHttp.message });
+    // Não repassar mensagens do Fastify ou de plugins: algumas vêm em inglês
+    // e podem expor detalhes da implementação.
+    const possivelHttp = erro as { statusCode?: unknown };
+    if (typeof possivelHttp.statusCode === "number" && possivelHttp.statusCode < 500) {
+      const mensagens: Record<number, string> = {
+        400: "Os dados enviados são inválidos.",
+        404: "Rota não encontrada.",
+        413: "O conteúdo enviado excede o tamanho permitido.",
+        415: "O formato enviado não é aceito.",
+        429: "Você fez muitas tentativas. Aguarde um minuto e tente novamente.",
+      };
+      return reply
+        .code(possivelHttp.statusCode)
+        .send({ erro: mensagens[possivelHttp.statusCode] ?? "Não foi possível concluir a solicitação." });
     }
 
     req.log.error({ err: erro }, "erro não tratado");
