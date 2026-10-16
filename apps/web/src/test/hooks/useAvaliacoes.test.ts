@@ -17,9 +17,12 @@ describe("avaliações do produto aberto", () => {
   it("avaliação atrasada de A não aparece no produto B", async () => {
     const a = respostaPendente<AvaliacaoResponse[]>();
     get.mockReturnValueOnce(a.promise).mockResolvedValue([{ nome: "Compra de B", nota: 4 }]);
-    const { result, rerender } = renderHook(({ id }: { id: string | null }) => useAvaliacoes(id, erro), {
-      initialProps: { id: "a" },
-    });
+    const { result, rerender } = renderHook<ReturnType<typeof useAvaliacoes>, { id: string | null }>(
+      ({ id }) => useAvaliacoes(id, erro),
+      {
+        initialProps: { id: "a" },
+      },
+    );
     rerender({ id: "b" });
     await waitFor(() => expect(result.current.avaliacoes[0]?.nome).toBe("Compra de B"));
     await act(async () => {
@@ -31,9 +34,12 @@ describe("avaliações do produto aberto", () => {
   it("erro atrasado de um produto fechado não aparece no próximo", async () => {
     const a = respostaPendente<AvaliacaoResponse[]>();
     get.mockReturnValue(a.promise);
-    const { rerender } = renderHook(({ id }: { id: string | null }) => useAvaliacoes(id, erro), {
-      initialProps: { id: "a" },
-    });
+    const { rerender } = renderHook<ReturnType<typeof useAvaliacoes>, { id: string | null }>(
+      ({ id }) => useAvaliacoes(id, erro),
+      {
+        initialProps: { id: "a" },
+      },
+    );
     rerender({ id: null });
     await act(async () => {
       a.rejeitar(new Error("Falha antiga"));
