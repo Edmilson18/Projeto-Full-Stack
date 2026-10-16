@@ -301,6 +301,10 @@ export function atualizarEnderecoUsuario(id: string, endereco: Record<string, st
   );
 }
 
+export function atualizarNomeUsuario(id: string, nome: string) {
+  return obterPool().query("UPDATE usuarios SET nome = $2 WHERE id = $1", [id, nome]);
+}
+
 // ── Produtos ───────────────────────────────────────────────────────────────
 
 /**

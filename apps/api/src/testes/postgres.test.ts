@@ -90,8 +90,9 @@ describe("migrações simultâneas", () => {
         "001_inicial.sql",
         "002_sessoes_e_auditoria.sql",
         "003_idempotencia_pedidos.sql",
+        "004_limpar_pedidos_artificiais_do_admin.sql",
       ]);
-      expect((await a.query("SELECT nome FROM migracoes")).rows).toHaveLength(3);
+      expect((await a.query("SELECT nome FROM migracoes")).rows).toHaveLength(4);
       expect(await aplicarMigracoes(b)).toEqual([]);
     });
   });
@@ -103,7 +104,29 @@ describe("migrações simultâneas", () => {
       await expect(aplicarMigracoes(a)).rejects.toThrow(/Migração 001_inicial.sql falhou/);
       expect((await a.query("SELECT to_regclass($1) AS tabela", [`${schema}.categorias`])).rows[0]?.tabela).toBeNull();
       await a.query("DROP TABLE usuarios");
-      expect(await aplicarMigracoes(b)).toHaveLength(3);
+      expect(await aplicarMigracoes(b)).toHaveLength(4);
+    });
+  });
+
+  it("migração remove apenas pedidos artificiais e os itens em cascata", async () => {
+    await comSchemaNovo(async (a) => {
+      await a.query(`
+        CREATE TABLE usuarios (id TEXT PRIMARY KEY);
+        CREATE TABLE pedidos (id TEXT PRIMARY KEY, usuario_id TEXT REFERENCES usuarios(id));
+        CREATE TABLE itens_pedido (
+          id TEXT PRIMARY KEY,
+          pedido_id TEXT NOT NULL REFERENCES pedidos(id) ON DELETE CASCADE
+        );
+        CREATE TABLE migracoes (nome TEXT PRIMARY KEY, aplicada_em TIMESTAMPTZ NOT NULL DEFAULT now());
+        INSERT INTO usuarios (id) VALUES ('usr-admin');
+        INSERT INTO pedidos (id, usuario_id) VALUES ('ped-demo-1', 'usr-admin'), ('pedido-real-1', 'usr-admin');
+        INSERT INTO itens_pedido (id, pedido_id) VALUES ('item-demo', 'ped-demo-1'), ('item-real', 'pedido-real-1');
+        INSERT INTO migracoes (nome) VALUES ('001_inicial.sql'), ('002_sessoes_e_auditoria.sql'), ('003_idempotencia_pedidos.sql');
+      `);
+
+      expect(await aplicarMigracoes(a)).toEqual(["004_limpar_pedidos_artificiais_do_admin.sql"]);
+      expect((await a.query("SELECT id FROM pedidos ORDER BY id")).rows).toEqual([{ id: "pedido-real-1" }]);
+      expect((await a.query("SELECT id FROM itens_pedido")).rows).toEqual([{ id: "item-real" }]);
     });
   });
 });

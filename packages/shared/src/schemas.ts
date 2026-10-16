@@ -66,6 +66,10 @@ export type UsuarioPublico = z.infer<typeof usuarioPublico>;
 export const sessao = z.object({ usuario: usuarioPublico.nullable() });
 export type Sessao = z.infer<typeof sessao>;
 
+/** Entrada para alterar somente o nome exibido da conta. */
+export const nomeUsuarioInput = z.object({ nome });
+export type NomeUsuarioInput = z.infer<typeof nomeUsuarioInput>;
+
 // ── Endereço ───────────────────────────────────────────────────────────────
 
 export const CAMPOS_ENDERECO = ["cep", "rua", "numero", "complemento", "bairro", "cidade", "estado"] as const;

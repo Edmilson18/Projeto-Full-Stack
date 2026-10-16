@@ -739,6 +739,14 @@ describe("tokens de redefinição de senha", () => {
 });
 
 describe("integridade da demonstração", () => {
+  it("não cria nem mantém pedidos artificiais do administrador", async () => {
+    await semear();
+    const pedidosDeDemonstracao = await obterPool().query("SELECT id FROM pedidos WHERE id = ANY($1::text[])", [
+      ["ped-demo-1", "ped-demo-2", "ped-demo-3", "ped-demo-4", "ped-demo-5", "ped-demo-6", "ped-demo-7", "ped-demo-8"],
+    ]);
+    expect(pedidosDeDemonstracao.rows).toEqual([]);
+  });
+
   it("reexecutar seed preserva vendas e edições de produtos existentes", async () => {
     const usuario = await novoCliente();
     await obterPool().query(

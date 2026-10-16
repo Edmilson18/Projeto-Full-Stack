@@ -13,6 +13,7 @@ const conta: Conta = {
 const props = {
   usuario,
   onFechar: vi.fn(),
+  onSalvarNome: vi.fn().mockResolvedValue(undefined),
   onSalvarEndereco: vi.fn(),
   onDesfavoritar: vi.fn(),
   onAbrirProduto: vi.fn(),
@@ -27,6 +28,25 @@ describe("endereço da conta", () => {
     rerender(<AccountModal {...props} dadosConta={conta} />);
     expect(screen.getByLabelText("Rua")).toHaveValue("Rua Salva");
     expect(screen.getByLabelText("Número")).toHaveValue("25");
+  });
+
+  it("mostra o e-mail da conta cujo histórico está carregado", () => {
+    render(
+      <AccountModal
+        {...props}
+        dadosConta={{ ...conta, perfil: { ...conta.perfil, email: "conta-teste@exemplo.com" } }}
+      />,
+    );
+    expect(screen.getByLabelText("E-mail cadastrado")).toHaveValue("conta-teste@exemplo.com");
+  });
+
+  it("permite alterar o nome e mantém o e-mail somente leitura", async () => {
+    render(<AccountModal {...props} dadosConta={conta} />);
+    const email = screen.getByLabelText("E-mail cadastrado");
+    expect(email).toHaveAttribute("readonly");
+    fireEvent.change(screen.getByLabelText("Nome"), { target: { value: "Ana Silva" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar nome" }));
+    expect(props.onSalvarNome).toHaveBeenCalledWith("Ana Silva");
   });
 
   it("recarga e sugestão não apagam o que a pessoa editou ou limpou", () => {

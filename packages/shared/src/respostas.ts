@@ -164,6 +164,9 @@ export const conta = z.object({
 });
 export type Conta = z.infer<typeof conta>;
 
+export const usuarioAtualizadoResponse = z.object({ usuario: usuarioPublico });
+export type UsuarioAtualizadoResponse = z.infer<typeof usuarioAtualizadoResponse>;
+
 // ── Dashboard ──────────────────────────────────────────────────────────────
 
 export const dashboard = z.object({

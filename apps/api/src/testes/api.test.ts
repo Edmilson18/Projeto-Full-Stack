@@ -591,6 +591,19 @@ describe("pedidos pela API", () => {
     expect(conta.corpo).toHaveProperty("favoritos");
   });
 
+  it("permite atualizar o nome da conta, sem alterar o e-mail", async () => {
+    const cliente = await clienteComum();
+    const antes = await cliente.get("/api/conta");
+    const atualizado = await cliente.put("/api/conta/nome", { nome: "Ana Cliente" });
+    const depois = await cliente.get("/api/conta");
+
+    expect(atualizado.status).toBe(200);
+    expect(atualizado.corpo.usuario.nome).toBe("Ana Cliente");
+    expect(depois.corpo.perfil.nome).toBe("Ana Cliente");
+    expect(depois.corpo.perfil.email).toBe(antes.corpo.perfil.email);
+    expect((await novo().put("/api/conta/nome", { nome: "Sem sessão" })).status).toBe(401);
+  });
+
   it("favorita e desfavorita pelo estado desejado, sem inverter no repetido", async () => {
     const cliente = await clienteComum();
 

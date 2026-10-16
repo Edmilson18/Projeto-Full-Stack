@@ -1,6 +1,6 @@
 # Loja Tech
 
-Aplicação full-stack de e-commerce desenvolvida como projeto de portfólio. A Loja Tech reúne uma vitrine de produtos, carrinho, checkout demonstrativo e área do cliente, com frontend em React e backend em Node.js. A API tem também as rotas administrativas (produtos, pedidos, dashboard e auditoria); a interface web dessas rotas **não existe** — ver [Segurança e limitações](#segurança-e-limitações).
+Aplicação full-stack de e-commerce desenvolvida como projeto de portfólio. A Loja Tech reúne uma vitrine de produtos, carrinho, checkout demonstrativo e área do cliente, com frontend em React e backend em Node.js. Administradores acessam um painel próprio para acompanhar indicadores, gerenciar produtos e atualizar pedidos.
 
 > Projeto demonstrativo: pagamentos, frete e envio de pedidos não usam serviços externos reais.
 
@@ -38,10 +38,11 @@ Aplicação full-stack de e-commerce desenvolvida como projeto de portfólio. A 
 - Favoritos por conta (persistidos no servidor) e avaliação de produtos.
 - Tema claro e escuro.
 
-### Administração (só na API)
+### Administração
 
-As rotas abaixo existem e são testadas, mas **nenhuma interface web as consome**.
-Não há painel administrativo nesta versão.
+Contas com papel `admin` são direcionadas ao painel administrativo após o login.
+O painel reúne indicadores e relatórios, cadastro e manutenção de produtos,
+alertas de estoque, busca e atualização de pedidos.
 
 - Cadastro, busca, edição e inativação de produtos (`POST`/`PUT`/`DELETE /api/produtos`).
 - Preservação de histórico ao inativar produtos.
@@ -415,9 +416,6 @@ do banco: nenhum valor monetário vindo do frontend é usado no cálculo.
 
 ### Limitações conhecidas
 
-- **Não há painel administrativo.** As rotas de admin existem na API e são
-  testadas; a interface web que as usava foi removida e não foi reconstruída.
-  Administradores entram na mesma interface da loja, sem redirecionamento para página inexistente.
 - **Não há interface de cupom.** O hook `useCoupon` existe, valida corretamente
   o `valido: false`, mas nenhum componente o importa. O `App.tsx` envia
   `cupom: "Nenhum"` fixo.
@@ -428,7 +426,6 @@ do banco: nenhum valor monetário vindo do frontend é usado no cálculo.
 
 ## Próximos passos
 
-- Construir a interface administrativa.
 - Ligar a interface de cupom ao `useCoupon` que já existe.
 - Criar upload de imagens e envio de e-mail (hoje só há as variáveis reservadas).
 - Validar o workflow no GitHub e configurar o primeiro deploy.

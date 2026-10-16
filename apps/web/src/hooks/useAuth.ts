@@ -70,5 +70,9 @@ export function useAuth() {
     }
   }, []);
 
-  return { usuario, carregando, login, cadastrar, logout, invalidarSessao };
+  const atualizarUsuario = useCallback((usuarioAtualizado: UsuarioPublico) => {
+    setUsuario((atual) => (atual?.id === usuarioAtualizado.id ? usuarioAtualizado : atual));
+  }, []);
+
+  return { usuario, carregando, login, cadastrar, logout, invalidarSessao, atualizarUsuario };
 }

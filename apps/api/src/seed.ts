@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import type { PoolClient } from "pg";
 import { emTransacao, inicializarBanco } from "./database.js";
 import { fecharPool } from "./postgres.js";
@@ -133,51 +132,6 @@ const CUPONS = [
   },
 ];
 
-// Tuplas em vez de arrays soltos: o TypeScript infere `number | undefined` em
-// cada elemento sem `as const`, e o cálculo de subtotal deixa de compilar.
-const PEDIDOS_DEMONSTRACAO = [
-  {
-    diasAtras: 28,
-    status: "finalizado",
-    cliente: "usr-admin",
-    itens: [
-      ["prod-teclado", 1],
-      ["prod-mouse", 1],
-    ],
-  },
-  { diasAtras: 27, status: "processando", cliente: "usr-admin", itens: [["prod-monitor", 1]] },
-  { diasAtras: 26, status: "enviado", cliente: "usr-admin", itens: [["prod-cadeira", 1]] },
-  { diasAtras: 25, status: "finalizado", cliente: "usr-admin", itens: [["prod-headset", 1]] },
-  {
-    diasAtras: 24,
-    status: "enviado",
-    cliente: "usr-admin",
-    itens: [
-      ["prod-monitor", 1],
-      ["prod-mouse", 1],
-    ],
-  },
-  { diasAtras: 23, status: "cancelado", cliente: "usr-admin", itens: [["prod-cam", 1]] },
-  {
-    diasAtras: 22,
-    status: "processando",
-    cliente: "usr-admin",
-    itens: [
-      ["prod-cadeira", 1],
-      ["prod-teclado", 1],
-    ],
-  },
-  {
-    diasAtras: 21,
-    status: "finalizado",
-    cliente: "usr-admin",
-    itens: [
-      ["prod-teclado", 1],
-      ["prod-mouse", 1],
-    ],
-  },
-] as const;
-
 /**
  * Insere o produto de demonstração ou preenche apenas uma foto ausente.
  * Estoque, preços, status e outras edições existentes pertencem à loja.
@@ -219,8 +173,8 @@ async function inserirCupomSeFaltar(client: PoolClient, cupom: (typeof CUPONS)[n
   );
 }
 
-export async function semear(): Promise<{ produtos: number; cupons: number; pedidos: number }> {
-  const resultado = { produtos: 0, cupons: 0, pedidos: 0 };
+export async function semear(): Promise<{ produtos: number; cupons: number }> {
+  const resultado = { produtos: 0, cupons: 0 };
 
   await emTransacao(async (client) => {
     for (const produto of PRODUTOS) {
@@ -234,37 +188,6 @@ export async function semear(): Promise<{ produtos: number; cupons: number; pedi
       await inserirCupomSeFaltar(client, cupom);
       if (!antes.rowCount) resultado.cupons++;
     }
-
-    for (const [indice, pedido] of PEDIDOS_DEMONSTRACAO.entries()) {
-      const id = `ped-demo-${indice + 1}`;
-      const existe = await client.query("SELECT 1 FROM pedidos WHERE id = $1", [id]);
-      if (existe.rowCount) continue;
-
-      let subtotal = 0;
-      for (const [produtoId, quantidade] of pedido.itens) {
-        const preco = PRODUTOS.find((p) => p.id === produtoId)?.preco ?? 0;
-        subtotal += preco * quantidade;
-      }
-
-      const frete = subtotal >= 15_000 ? 0 : 2_000;
-      const desconto = 0;
-      const criadoEm = new Date(Date.now() - pedido.diasAtras * 86_400_000);
-
-      await client.query(
-        `INSERT INTO pedidos (id, usuario_id, subtotal_centavos, desconto_centavos, frete_centavos, total_centavos, status, metodo_pagamento, status_pagamento, criado_em)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, 'pix', 'aprovado', $8)`,
-        [id, pedido.cliente, subtotal, desconto, frete, subtotal - desconto + frete, pedido.status, criadoEm],
-      );
-
-      for (const [produtoId, quantidade] of pedido.itens) {
-        const preco = PRODUTOS.find((p) => p.id === produtoId)?.preco ?? 0;
-        await client.query(
-          "INSERT INTO itens_pedido (id, pedido_id, produto_id, quantidade, preco_unitario_centavos, subtotal_centavos) VALUES ($1, $2, $3, $4, $5, $6)",
-          [randomUUID(), id, produtoId, quantidade, preco, preco * quantidade],
-        );
-      }
-      resultado.pedidos++;
-    }
   });
 
   return resultado;
@@ -276,10 +199,10 @@ if (executadoDiretamente) {
   console.log(migracoes.length > 0 ? `Migrações aplicadas: ${migracoes.join(", ")}` : "Nenhuma migração nova.");
 
   const semeado = await semear();
-  const total = semeado.produtos + semeado.cupons + semeado.pedidos;
+  const total = semeado.produtos + semeado.cupons;
   console.log(
     total > 0
-      ? `Seed concluído — produtos: ${semeado.produtos}, cupons: ${semeado.cupons}, pedidos: ${semeado.pedidos} (novos)`
+      ? `Seed concluído — produtos: ${semeado.produtos}, cupons: ${semeado.cupons} (novos)`
       : "Seed concluído — nenhum registro novo (todos já existiam)",
   );
   console.log("Administrador: admin@lojaficticia.com (senha definida pelo ambiente na primeira criação).");

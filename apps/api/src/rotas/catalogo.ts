@@ -15,6 +15,8 @@ import {
   mensagem,
   maisVendido,
   enderecoSalvoResponse,
+  nomeUsuarioInput,
+  usuarioAtualizadoResponse,
 } from "@loja/shared";
 import {
   desfavoritarProduto,
@@ -35,6 +37,7 @@ import {
   produtoExiste,
   salvarAvaliacao,
   atualizarEnderecoUsuario,
+  atualizarNomeUsuario,
   atualizarProduto,
 } from "../database.js";
 import { ErroApp } from "../erros.js";
@@ -118,6 +121,13 @@ export async function registrarRotasCatalogo(app: FastifyInstance) {
       Object.fromEntries(CAMPOS_ENDERECO.map((campo) => [campo, entrada[campo]])),
     );
     return enderecoSalvoResponse.parse({ perfil: await buscarPerfilUsuario(usuario.id) });
+  });
+
+  app.put("/api/conta/nome", async (req) => {
+    const usuario = await exigirSessao(req);
+    const entrada = validarEntrada(nomeUsuarioInput, req.body);
+    await atualizarNomeUsuario(usuario.id, entrada.nome);
+    return usuarioAtualizadoResponse.parse({ usuario: { ...usuario, nome: entrada.nome } });
   });
 
   // Estado desejado em vez de "alternar": as duas rotas são idempotentes, e

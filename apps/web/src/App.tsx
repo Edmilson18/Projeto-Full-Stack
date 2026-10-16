@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { LogOut } from "lucide-react";
-import type { CepResponse, ProdutoResponse, RecuperarSenhaResponse } from "@loja/shared";
+import { LogOut, Search, X } from "lucide-react";
+import type { CepResponse, ProdutoResponse, RecuperarSenhaResponse, UsuarioAtualizadoResponse } from "@loja/shared";
 import { useAuth } from "./hooks/useAuth.js";
 import { useCarrinho, type ItemCarrinho } from "./hooks/useCarrinho.js";
 import { useDebounce } from "./hooks/useDebounce.js";
@@ -25,16 +25,26 @@ import { ProductModal } from "./components/ProductModal.js";
 import { AccountModal } from "./components/AccountModal.js";
 import { PaymentSummary } from "./components/PaymentSummary.js";
 import { Toast } from "./components/Toast.js";
+import { AdminDashboard } from "./components/AdminDashboard.js";
 
 type Produto = ProdutoResponse;
 // Tipos inline removidos - agora usam tipos nomeados do shared.
 
 export default function App() {
-  const { usuario, carregando: verificandoSessao, login, cadastrar, logout, invalidarSessao } = useAuth();
+  const {
+    usuario,
+    carregando: verificandoSessao,
+    login,
+    cadastrar,
+    logout,
+    invalidarSessao,
+    atualizarUsuario,
+  } = useAuth();
   const { produtos, carregando, erro: erroProdutos, recarregar } = useProducts();
   const { carrinho, setCarrinho, adicionarAoCarrinho, alterarQuantidade, limparCarrinho, quantidadeCarrinho } =
     useCarrinho(produtos);
   const { tema, setTema } = useTema();
+  const areaPrincipalRef = useRef<HTMLElement | null>(null);
   const { recentes, adicionarRecente } = useRecentes(produtos);
   const [tokenInicial, setTokenInicial] = useState(
     () => new URLSearchParams(window.location.search).get("resetToken") ?? "",
@@ -88,6 +98,51 @@ export default function App() {
 
   useEffect(() => {
     limparTokenDaUrl();
+  }, []);
+  useEffect(() => {
+    const areaPrincipal = areaPrincipalRef.current;
+    if (!areaPrincipal || !("IntersectionObserver" in window)) return undefined;
+
+    const seletores = [
+      ".hero",
+      ".section-header",
+      ".showcase-grid",
+      ".favorites-section",
+      ".catalog-controls",
+      ".catalog-grid",
+      ".info-grid",
+      ".recent-section",
+    ].join(",");
+    const observados = new WeakSet<Element>();
+    const revelarAoEntrar = new IntersectionObserver(
+      (entradas) => {
+        entradas.forEach((entrada) => {
+          if (!entrada.isIntersecting) return;
+          entrada.target.classList.add("is-in-view");
+          revelarAoEntrar.unobserve(entrada.target);
+        });
+      },
+      { threshold: 0.12, rootMargin: "0px 0px -5% 0px" },
+    );
+
+    const observarNovasAreas = () => {
+      areaPrincipal.querySelectorAll(seletores).forEach((elemento) => {
+        if (observados.has(elemento)) return;
+        observados.add(elemento);
+        revelarAoEntrar.observe(elemento);
+      });
+    };
+
+    document.documentElement.classList.add("motion-ready");
+    observarNovasAreas();
+    const mutacoes = new MutationObserver(observarNovasAreas);
+    mutacoes.observe(areaPrincipal, { childList: true, subtree: true });
+
+    return () => {
+      mutacoes.disconnect();
+      revelarAoEntrar.disconnect();
+      document.documentElement.classList.remove("motion-ready");
+    };
   }, []);
   useEffect(() => {
     const expirada = () => {
@@ -380,14 +435,18 @@ export default function App() {
     [usuario, carrinho, metodoPagamento],
   );
 
-  // O admin entra pela mesma tela do cliente. Não existe painel administrativo:
-  // as rotas `/api/admin/*` existem e são protegidas por papel, mas não há
-  // interface para elas. O redirecionamento para `/admin.html` foi removido
-  // porque o arquivo não existe mais — ele levava o admin a uma página de erro
-  // sem volta, a não ser digitando a URL de novo.
   const handleRecuperarSenha = useCallback(async (email: string) => {
     return api.post<RecuperarSenhaResponse>("/recuperar-senha", { email });
   }, []);
+
+  const handleSalvarNome = useCallback(
+    async (nome: string) => {
+      const dados = await api.put<UsuarioAtualizadoResponse>("/conta/nome", { nome });
+      atualizarUsuario(dados.usuario);
+      await carregarConta();
+    },
+    [atualizarUsuario, carregarConta],
+  );
 
   const handleRedefinirSenha = useCallback(
     async (token: string, senha: string) => {
@@ -434,6 +493,16 @@ export default function App() {
     setMensagem("");
   }, []);
 
+  const sairDoPainelAdmin = useCallback(async () => {
+    try {
+      await logout();
+      setMensagem("Você saiu da sua conta.");
+      setTelaLogin(true);
+    } catch (err) {
+      setMensagem(err instanceof Error ? err.message : "Não foi possível encerrar a sessão.");
+    }
+  }, [logout]);
+
   if (verificandoSessao)
     return (
       <div className="loading" role="status">
@@ -466,6 +535,21 @@ export default function App() {
     );
   }
 
+  if (usuario?.role === "admin") {
+    return (
+      <>
+        <AdminDashboard
+          tema={tema}
+          nome={usuario.nome}
+          email={usuario.email}
+          onToggleTema={() => setTema(tema === "claro" ? "escuro" : "claro")}
+          onSair={() => void sairDoPainelAdmin()}
+        />
+        <Toast mensagem={mensagem} onFechar={fecharMensagem} />
+      </>
+    );
+  }
+
   return (
     <div className="app-shell">
       <Header
@@ -482,18 +566,21 @@ export default function App() {
         onSair={() => setConfirmarSaida(true)}
       />
 
-      <main className="container main-layout">
+      <main className="container main-layout" ref={areaPrincipalRef}>
         <section className="hero">
           <div>
-            <span className="badge">Novo ciclo</span>
-            <h2>Produtos premium para sua rotina</h2>
-            <p>Tecnologia, design e performance em um ambiente de compra pensado para clientes e negócios.</p>
+            <span className="badge">Tecnologia para o seu dia</span>
+            <h2>Seu próximo upgrade começa aqui.</h2>
+            <p>
+              Encontre os acessórios que combinam com seu jeito de trabalhar, jogar e criar. Escolha com calma e compre
+              com confiança.
+            </p>
             <div className="hero-actions">
               <a href="#produtos" className="primary-btn">
-                Comprar agora
+                Explorar produtos
               </a>
               <a href="#sobre" className="secondary-btn">
-                Saiba mais
+                Conheça a loja
               </a>
             </div>
           </div>
@@ -506,7 +593,7 @@ export default function App() {
                 Arquivo próprio em 3:2, e não o `teclado.jpg` quadrado: a caixa do
                 banner é deitada, e forçar a foto quadrada nela cortaria as laterais
                 da foto. */}
-            <img src="/imagens/banner.jpg" alt="Banner principal" />
+            <img src="/imagens/banner.jpg" alt="Teclado gamer com iluminação azul e roxa" />
           </div>
         </section>
 
@@ -565,12 +652,20 @@ export default function App() {
         </section>
 
         <div className="catalog-controls" aria-label="Filtros do catálogo">
-          <input
-            value={busca}
-            onChange={(e) => setBusca(e.target.value)}
-            placeholder="Buscar produtos"
-            aria-label="Buscar produtos"
-          />
+          <label className="search-field">
+            <Search size={18} aria-hidden="true" />
+            <input
+              value={busca}
+              onChange={(e) => setBusca(e.target.value)}
+              placeholder="Buscar produtos por nome ou descrição"
+              aria-label="Buscar produtos"
+            />
+            {busca && (
+              <button type="button" className="clear-search" aria-label="Limpar busca" onClick={() => setBusca("")}>
+                <X size={17} />
+              </button>
+            )}
+          </label>
           <select
             value={categoriaSelecionada}
             onChange={(e) => setCategoriaSelecionada(e.target.value)}
@@ -580,6 +675,24 @@ export default function App() {
               <option key={categoria}>{categoria}</option>
             ))}
           </select>
+        </div>
+        <div className="catalog-feedback" aria-live="polite">
+          <span>
+            {produtosFiltrados.length === 1
+              ? "1 produto encontrado"
+              : `${produtosFiltrados.length} produtos encontrados`}
+          </span>
+          {(busca || categoriaSelecionada !== "Todas") && (
+            <button
+              type="button"
+              onClick={() => {
+                setBusca("");
+                setCategoriaSelecionada("Todas");
+              }}
+            >
+              Limpar filtros
+            </button>
+          )}
         </div>
 
         {erroProdutos ? (
@@ -727,6 +840,7 @@ export default function App() {
           usuario={usuario}
           dadosConta={dadosConta}
           onFechar={() => setContaAberta(false)}
+          onSalvarNome={handleSalvarNome}
           onSalvarEndereco={salvarEndereco}
           enderecoSugerido={enderecoSugerido}
           onDesfavoritar={handleDesfavoritar}
