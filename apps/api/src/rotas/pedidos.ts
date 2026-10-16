@@ -9,12 +9,15 @@ import {
   mensagem,
   pedidoCriado,
   pedidoInput,
+  relatorioQuery,
+  relatorioVendas as relatorioVendasSchema,
   statusPedidoInput,
 } from "@loja/shared";
 import {
   criarPedido,
   listarDashboard,
   listarPedidosAdmin,
+  listarRelatorioVendas,
   atualizarStatusPedido,
   listarAuditoria,
   validarCupomCodigo,
@@ -66,6 +69,12 @@ export async function registrarRotasPedidos(app: FastifyInstance) {
     // Validar a saída é o que impede um campo renomeado de chegar como
     // `undefined` no gráfico do painel, onde viraria `NaN` sem aviso.
     return dashboardSchema.parse(await listarDashboard());
+  });
+
+  app.get("/api/admin/relatorios", async (req) => {
+    await exigirAdmin(req);
+    const filtros = validarEntrada(relatorioQuery, req.query);
+    return relatorioVendasSchema.parse(await listarRelatorioVendas(filtros));
   });
 
   app.get("/api/admin/pedidos", async (req) => {

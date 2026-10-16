@@ -131,6 +131,7 @@ describe("permissões administrativas", () => {
     const anonimo = novo();
     for (const [metodo, rota] of [
       ["get", "/api/dashboard"],
+      ["get", "/api/admin/relatorios?inicio=2026-10-01&fim=2026-10-16"],
       ["get", "/api/admin/produtos"],
       ["get", "/api/admin/pedidos"],
     ] as const) {
@@ -143,6 +144,7 @@ describe("permissões administrativas", () => {
     const cliente = await clienteComum();
     for (const [metodo, rota] of [
       ["get", "/api/dashboard"],
+      ["get", "/api/admin/relatorios?inicio=2026-10-01&fim=2026-10-16"],
       ["get", "/api/admin/produtos"],
       ["get", "/api/admin/pedidos"],
     ] as const) {
@@ -178,6 +180,24 @@ describe("permissões administrativas", () => {
     const resposta = await cliente.get("/api/dashboard");
     expect(resposta.status).toBe(200);
     expect(resposta.corpo).toHaveProperty("totalProdutos");
+    const relatorio = await cliente.get("/api/admin/relatorios?inicio=2000-01-01&fim=2099-12-31");
+    expect(relatorio.status).toBe(200);
+    expect(relatorio.corpo).toEqual(
+      expect.objectContaining({
+        totalReceita: expect.any(Number),
+        totalPedidos: expect.any(Number),
+        produtosVendidos: expect.any(Number),
+        vendasPorDia: expect.any(Array),
+        vendasPorCategoria: expect.any(Array),
+      }),
+    );
+  });
+
+  it("valida o período dos relatórios", async () => {
+    const cliente = novo();
+    await cliente.post("/api/login", ADMIN);
+    const resposta = await cliente.get("/api/admin/relatorios?inicio=2026-10-20&fim=2026-10-01");
+    expect(resposta.status).toBe(400);
   });
 });
 
@@ -985,14 +1005,13 @@ describe("rate limit", () => {
     // ele, senão as próprias requisições dos outros testes seriam barradas.
     const comLimite = await iniciarContexto({ semRateLimit: false });
     try {
-      const respostas: number[] = [];
+      const respostas: Array<{ status: number; corpo: { erro?: string } }> = [];
       // /api/login tem limite próprio de 10 por minuto.
       for (let tentativa = 0; tentativa < 14; tentativa++) {
-        respostas.push(
-          (await comLimite.novoCliente().post("/api/login", { email: "x@y.com", senha: "errada123" })).status,
-        );
+        respostas.push(await comLimite.novoCliente().post("/api/login", { email: "x@y.com", senha: "errada123" }));
       }
-      expect(respostas).toContain(429);
+      const bloqueada = respostas.find((resposta) => resposta.status === 429);
+      expect(bloqueada?.corpo.erro).toBe("Você fez muitas tentativas. Aguarde um minuto e tente novamente.");
     } finally {
       await comLimite.encerrar();
     }

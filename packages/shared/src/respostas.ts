@@ -193,6 +193,20 @@ export const dashboard = z.object({
 });
 export type Dashboard = z.infer<typeof dashboard>;
 
+export const relatorioVendas = z.object({
+  totalReceita: preco,
+  totalPedidos: z.number().int(),
+  ticketMedio: preco,
+  produtosVendidos: z.number().int(),
+  vendasPorDia: z.array(z.object({ dia: z.string(), total: preco })),
+  vendasPorCategoria: z.array(z.object({ categoria: z.string(), quantidade: z.number().int(), total: preco })),
+  maisVendidos: z.array(
+    z.object({ id: z.string(), nome: z.string(), preco, vendidos: z.number().int(), total: preco }),
+  ),
+  pedidosPorStatus: z.record(z.string(), z.number().int()),
+});
+export type RelatorioVendas = z.infer<typeof relatorioVendas>;
+
 // ── Auditoria ──────────────────────────────────────────────────────────────
 
 export const registroAuditoria = z.object({

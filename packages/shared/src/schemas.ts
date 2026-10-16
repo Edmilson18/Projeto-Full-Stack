@@ -258,3 +258,16 @@ export const statusPedidoInput = z.object({
   status: statusPedido,
 });
 export type StatusPedidoInput = z.infer<typeof statusPedidoInput>;
+
+export const relatorioQuery = z
+  .object({
+    inicio: z.iso.date(),
+    fim: z.iso.date(),
+    produtoId: idTexto.optional(),
+    categoriaId: idTexto.optional(),
+  })
+  .refine((filtros) => filtros.inicio <= filtros.fim, {
+    message: "A data inicial deve ser anterior ou igual à data final.",
+    path: ["fim"],
+  });
+export type RelatorioQuery = z.infer<typeof relatorioQuery>;

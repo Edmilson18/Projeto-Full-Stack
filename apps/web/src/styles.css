@@ -1,4 +1,25 @@
-@import url("https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&display=swap");
+@import "@fontsource/manrope/latin-400.css";
+@import "@fontsource/manrope/latin-ext-400.css";
+@import "@fontsource/manrope/latin-500.css";
+@import "@fontsource/manrope/latin-ext-500.css";
+@import "@fontsource/manrope/latin-600.css";
+@import "@fontsource/manrope/latin-ext-600.css";
+@import "@fontsource/manrope/latin-700.css";
+@import "@fontsource/manrope/latin-ext-700.css";
+@import "@fontsource/manrope/latin-800.css";
+@import "@fontsource/manrope/latin-ext-800.css";
+@import "@fontsource/space-grotesk/latin-400.css";
+@import "@fontsource/space-grotesk/latin-ext-400.css";
+@import "@fontsource/space-grotesk/latin-500.css";
+@import "@fontsource/space-grotesk/latin-ext-500.css";
+@import "@fontsource/space-grotesk/latin-600.css";
+@import "@fontsource/space-grotesk/latin-ext-600.css";
+@import "@fontsource/space-grotesk/latin-700.css";
+@import "@fontsource/space-grotesk/latin-ext-700.css";
+@import "@fontsource/dm-mono/latin-400.css";
+@import "@fontsource/dm-mono/latin-ext-400.css";
+@import "@fontsource/dm-mono/latin-500.css";
+@import "@fontsource/dm-mono/latin-ext-500.css";
 
 :root {
   color-scheme: light;
@@ -3546,6 +3567,44 @@ textarea {
   background: var(--panel);
   box-shadow: var(--shadow-lg);
 }
+.admin-download-dialog {
+  width: min(430px, 100%);
+  padding: 27px;
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  background: var(--panel);
+  box-shadow: var(--shadow-lg);
+  animation: admin-rise 0.22s both;
+}
+.admin-download-icon {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  place-items: center;
+  border-radius: 15px;
+  background: var(--blue-soft);
+  color: var(--blue);
+}
+.admin-download-dialog h2 {
+  margin: 17px 0 8px;
+  color: var(--ink);
+  font:
+    650 1.2rem "Space Grotesk",
+    sans-serif;
+}
+.admin-download-dialog p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.65;
+}
+.admin-download-dialog p strong {
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.admin-download-dialog .admin-form-actions {
+  margin-top: 22px;
+}
 @keyframes admin-overlay-in {
   from {
     opacity: 0;
@@ -3559,6 +3618,169 @@ textarea {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 14px;
   margin-bottom: 16px;
+}
+.admin-report-filters {
+  margin-bottom: 14px;
+  padding: 21px 22px 17px;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  background: var(--panel);
+  box-shadow: var(--shadow-sm);
+}
+.admin-report-filter-heading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 18px;
+}
+.admin-report-filter-heading h2 {
+  margin: 4px 0 0;
+  color: var(--ink);
+  font:
+    650 1.08rem "Space Grotesk",
+    sans-serif;
+}
+.admin-report-filter-heading p,
+.admin-report-filter-footer > span {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+.admin-filter-kicker {
+  color: var(--blue);
+  font-size: 0.6rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+}
+.admin-report-filter-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+.admin-report-field {
+  display: grid;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 700;
+}
+.admin-report-field input,
+.admin-report-field select {
+  width: 100%;
+  min-width: 0;
+  height: 42px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  outline: none;
+  background: var(--paper);
+  color: var(--ink);
+  font:
+    550 0.75rem "Manrope",
+    sans-serif;
+  transition:
+    border-color 0.18s ease,
+    box-shadow 0.18s ease;
+}
+.admin-report-field input:focus-visible,
+.admin-report-field select:focus-visible {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue) 16%, transparent);
+}
+.admin-report-filter-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-top: 16px;
+}
+.admin-report-filter-footer > div {
+  display: flex;
+  gap: 8px;
+}
+.admin-report-feedback {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  margin-top: 16px;
+  padding: 12px 15px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  color: var(--muted);
+  animation: admin-feedback-in 0.2s ease-out both;
+}
+.admin-report-feedback.is-success {
+  border-color: color-mix(in srgb, var(--success) 35%, var(--line));
+  background: color-mix(in srgb, var(--success) 8%, var(--panel));
+  color: var(--success);
+}
+.admin-report-feedback.is-loading {
+  border-color: color-mix(in srgb, var(--blue) 32%, var(--line));
+  background: color-mix(in srgb, var(--blue) 7%, var(--panel));
+  color: var(--blue);
+}
+.admin-report-feedback.is-pending {
+  border-color: color-mix(in srgb, #d18b1f 35%, var(--line));
+  background: color-mix(in srgb, #d18b1f 8%, var(--panel));
+  color: #9a6410;
+}
+.admin-report-feedback.is-error {
+  border-color: color-mix(in srgb, #d14b55 30%, var(--line));
+  background: color-mix(in srgb, #d14b55 6%, var(--panel));
+  color: #b33c45;
+}
+.admin-report-feedback > span:last-child {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.admin-report-feedback strong {
+  color: currentColor;
+  font-size: 0.75rem;
+}
+.admin-report-feedback small {
+  color: var(--muted);
+  font-size: 0.68rem;
+  line-height: 1.5;
+}
+.admin-report-feedback-spinner {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  border: 2px solid color-mix(in srgb, currentColor 25%, transparent);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: admin-spin 0.7s linear infinite;
+}
+@keyframes admin-feedback-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .admin-report-feedback,
+  .admin-report-feedback-spinner {
+    animation-duration: 0.01ms;
+    animation-iteration-count: 1;
+  }
+}
+.admin-report-average {
+  margin: -4px 0 16px;
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+.admin-report-average strong {
+  color: var(--ink);
+}
+.admin-primary-btn:disabled {
+  cursor: wait;
+  opacity: 0.65;
 }
 .admin-report-summary article {
   display: grid;
@@ -3839,6 +4061,24 @@ textarea {
   .admin-report-summary {
     grid-template-columns: 1fr;
     gap: 9px;
+  }
+  .admin-report-filters {
+    padding: 16px;
+  }
+  .admin-report-filter-heading,
+  .admin-report-filter-footer {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .admin-report-filter-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .admin-report-filter-footer > div {
+    width: 100%;
+  }
+  .admin-report-filter-footer button {
+    flex: 1;
+    justify-content: center;
   }
 }
 @media print {

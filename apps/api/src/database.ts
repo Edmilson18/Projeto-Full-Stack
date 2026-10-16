@@ -1,6 +1,6 @@
 import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
 import type { PoolClient } from "pg";
-import type { MetodoPagamento, PedidoCriado } from "@loja/shared";
+import type { MetodoPagamento, PedidoCriado, RelatorioQuery } from "@loja/shared";
 import { enderecoInput, statusPedido, TRANSICOES_PEDIDO } from "@loja/shared";
 import { emTransacao, obterPool } from "./postgres.js";
 import { aplicarMigracoes } from "./postgres.js";
@@ -974,6 +974,98 @@ export async function listarDashboard() {
       pedidosPorStatus: Object.fromEntries(porStatus.rows.map((linha) => [linha.status, linha.total])),
       estoqueBaixo: estoqueBaixo.rows,
       maisVendidos: maisVendidos.rows.map((linha) => ({ ...linha, preco: Number(linha.preco_centavos) / 100 })),
+    };
+  });
+}
+
+export async function listarRelatorioVendas(filtros: RelatorioQuery) {
+  return emTransacao(async (client) => {
+    const parametros = [filtros.inicio, filtros.fim, filtros.produtoId ?? null, filtros.categoriaId ?? null];
+    const pedidosFiltrados = `
+      WITH pedidos_filtrados AS (
+        SELECT pe.id, pe.status
+        FROM pedidos pe
+        WHERE pe.criado_em >= ($1::date::timestamp AT TIME ZONE 'America/Sao_Paulo')
+          AND pe.criado_em < (($2::date + 1)::timestamp AT TIME ZONE 'America/Sao_Paulo')
+          AND ($3::text IS NULL OR EXISTS (
+            SELECT 1 FROM itens_pedido filtro_i
+            WHERE filtro_i.pedido_id = pe.id AND filtro_i.produto_id = $3
+          ))
+          AND ($4::text IS NULL OR EXISTS (
+            SELECT 1 FROM itens_pedido filtro_i
+            JOIN produtos filtro_p ON filtro_p.id = filtro_i.produto_id
+            WHERE filtro_i.pedido_id = pe.id AND filtro_p.categoria_id = $4
+          ))
+      ),
+      itens_filtrados AS (
+        SELECT i.pedido_id, i.produto_id, i.quantidade, i.subtotal_centavos,
+               p.nome, p.preco_centavos, c.nome AS categoria
+        FROM itens_pedido i
+        JOIN pedidos_filtrados pe ON pe.id = i.pedido_id
+        JOIN produtos p ON p.id = i.produto_id
+        JOIN categorias c ON c.id = p.categoria_id
+        WHERE pe.status <> 'cancelado'
+          AND ($3::text IS NULL OR i.produto_id = $3)
+          AND ($4::text IS NULL OR p.categoria_id = $4)
+      )`;
+
+    const [resumo, porDia, porCategoria, maisVendidos, porStatus] = [
+      await client.query(
+        `${pedidosFiltrados}
+         SELECT (SELECT COUNT(*)::int FROM pedidos_filtrados) AS total_pedidos,
+                COALESCE((SELECT SUM(subtotal_centavos) FROM itens_filtrados), 0) AS receita,
+                COALESCE((SELECT SUM(quantidade)::int FROM itens_filtrados), 0) AS produtos_vendidos,
+                CASE WHEN (SELECT COUNT(*) FROM pedidos_filtrados WHERE status <> 'cancelado') > 0
+                     THEN COALESCE((SELECT SUM(subtotal_centavos) FROM itens_filtrados), 0)::numeric
+                          / (SELECT COUNT(*) FROM pedidos_filtrados WHERE status <> 'cancelado') / 100
+                     ELSE 0 END AS ticket_medio`,
+        parametros,
+      ),
+      await client.query(
+        `${pedidosFiltrados}
+         SELECT to_char((pe.criado_em AT TIME ZONE 'America/Sao_Paulo')::date, 'YYYY-MM-DD') AS dia,
+                SUM(i.subtotal_centavos) AS total
+         FROM itens_filtrados i JOIN pedidos pe ON pe.id = i.pedido_id
+         GROUP BY 1 ORDER BY 1`,
+        parametros,
+      ),
+      await client.query(
+        `${pedidosFiltrados}
+         SELECT categoria, SUM(quantidade)::int AS quantidade, SUM(subtotal_centavos) AS total
+         FROM itens_filtrados GROUP BY categoria ORDER BY total DESC`,
+        parametros,
+      ),
+      await client.query(
+        `${pedidosFiltrados}
+         SELECT produto_id AS id, nome, MAX(preco_centavos) AS preco,
+                SUM(quantidade)::int AS vendidos, SUM(subtotal_centavos) AS total
+         FROM itens_filtrados GROUP BY produto_id, nome ORDER BY vendidos DESC, nome LIMIT 20`,
+        parametros,
+      ),
+      await client.query(
+        `${pedidosFiltrados}
+         SELECT status, COUNT(*)::int AS total FROM pedidos_filtrados GROUP BY status`,
+        parametros,
+      ),
+    ] as const;
+    const linha = resumo.rows[0];
+    return {
+      totalReceita: Number(linha?.receita ?? 0) / 100,
+      totalPedidos: Number(linha?.total_pedidos ?? 0),
+      ticketMedio: Number(linha?.ticket_medio ?? 0),
+      produtosVendidos: Number(linha?.produtos_vendidos ?? 0),
+      vendasPorDia: porDia.rows.map((item) => ({ dia: item.dia, total: Number(item.total) / 100 })),
+      vendasPorCategoria: porCategoria.rows.map((item) => ({
+        categoria: item.categoria,
+        quantidade: item.quantidade,
+        total: Number(item.total) / 100,
+      })),
+      maisVendidos: maisVendidos.rows.map((item) => ({
+        ...item,
+        preco: Number(item.preco) / 100,
+        total: Number(item.total) / 100,
+      })),
+      pedidosPorStatus: Object.fromEntries(porStatus.rows.map((item) => [item.status, item.total])),
     };
   });
 }

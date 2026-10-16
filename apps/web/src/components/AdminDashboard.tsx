@@ -8,14 +8,13 @@ import {
   CircleDollarSign,
   ClipboardList,
   Download,
+  Filter,
   LayoutDashboard,
   LogOut,
   Moon,
   PackagePlus,
   Pencil,
   Plus,
-  Printer,
-  RefreshCw,
   Search,
   ShieldCheck,
   ShoppingBag,
@@ -28,6 +27,8 @@ import {
   type Dashboard,
   type PedidoAdmin,
   type ProdutoResponse,
+  type RelatorioQuery,
+  type RelatorioVendas,
   type StatusPedido,
 } from "@loja/shared";
 import { api } from "../lib/api.js";
@@ -69,12 +70,108 @@ const STATUS_LABEL: Record<StatusPedido, string> = {
 
 const BRL = (valor: number) => formatarMoeda(valor);
 
+function baixarCsv(linhas: string[][], nomeArquivo: string) {
+  const csv =
+    "\uFEFF" + linhas.map((linha) => linha.map((campo) => `"${campo.replaceAll('"', '""')}"`).join(";")).join("\r\n");
+  const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = nomeArquivo;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function baixarPdf(linhas: string[][], nomeArquivo: string) {
+  const texto = linhas
+    .map((linha) => linha.join("  |  "))
+    .flatMap((linha) => {
+      const simples = linha
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^\x20-\x7e]/g, "-");
+      if (!simples) return [""];
+      const partes: string[] = [];
+      for (let inicio = 0; inicio < simples.length; inicio += 92) partes.push(simples.slice(inicio, inicio + 92));
+      return partes;
+    });
+  const paginas: string[][] = [];
+  for (let inicio = 0; inicio < texto.length; inicio += 48) paginas.push(texto.slice(inicio, inicio + 48));
+  if (!paginas.length) paginas.push(["Relatorio de vendas"]);
+
+  const objetos = new Map<number, string>();
+  const idsPaginas = paginas.map((_, indice) => 4 + indice * 2);
+  objetos.set(1, "<< /Type /Catalog /Pages 2 0 R >>");
+  objetos.set(
+    2,
+    `<< /Type /Pages /Kids [${idsPaginas.map((id) => `${id} 0 R`).join(" ")}] /Count ${paginas.length} >>`,
+  );
+  objetos.set(3, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>");
+  paginas.forEach((pagina, indice) => {
+    const idPagina = idsPaginas[indice]!;
+    const idStream = idPagina + 1;
+    const comandos = ["BT", "/F1 10 Tf", "48 790 Td", "15 TL"];
+    pagina.forEach((linha, linhaIndice) => {
+      if (linhaIndice > 0) comandos.push("T*");
+      const segura = linha.replaceAll("\\", "\\\\").replaceAll("(", "\\(").replaceAll(")", "\\)");
+      comandos.push(`(${segura}) Tj`);
+    });
+    comandos.push("ET");
+    const stream = comandos.join("\n");
+    objetos.set(
+      idPagina,
+      `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 3 0 R >> >> /Contents ${idStream} 0 R >>`,
+    );
+    objetos.set(idStream, `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`);
+  });
+
+  let pdf = "%PDF-1.4\n";
+  const totalObjetos = Math.max(...objetos.keys());
+  const deslocamentos = Array<number>(totalObjetos + 1).fill(0);
+  for (let id = 1; id <= totalObjetos; id++) {
+    deslocamentos[id] = pdf.length;
+    pdf += `${id} 0 obj\n${objetos.get(id)}\nendobj\n`;
+  }
+  const inicioXref = pdf.length;
+  pdf += `xref\n0 ${totalObjetos + 1}\n0000000000 65535 f \n`;
+  for (let id = 1; id <= totalObjetos; id++) pdf += `${String(deslocamentos[id]).padStart(10, "0")} 00000 n \n`;
+  pdf += `trailer\n<< /Size ${totalObjetos + 1} /Root 1 0 R >>\nstartxref\n${inicioXref}\n%%EOF`;
+  const url = URL.createObjectURL(new Blob([pdf], { type: "application/pdf" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = nomeArquivo;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function dataLocal(data: Date) {
+  const ano = data.getFullYear();
+  const mes = String(data.getMonth() + 1).padStart(2, "0");
+  const dia = String(data.getDate()).padStart(2, "0");
+  return `${ano}-${mes}-${dia}`;
+}
+
+function filtrosIniciais(): RelatorioQuery {
+  const fim = new Date();
+  const inicio = new Date(fim);
+  inicio.setDate(inicio.getDate() - 29);
+  return { inicio: dataLocal(inicio), fim: dataLocal(fim) };
+}
+
 export function AdminDashboard({ tema, nome, email, onToggleTema, onSair }: AdminDashboardProps) {
   const [secao, setSecao] = useState<SecaoAdmin>("visao-geral");
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
   const [produtos, setProdutos] = useState<ProdutoResponse[]>([]);
   const [categorias, setCategorias] = useState<CategoriaResponse[]>([]);
   const [pedidos, setPedidos] = useState<PedidoAdmin[]>([]);
+  const [relatorio, setRelatorio] = useState<RelatorioVendas | null>(null);
+  const [filtrosRascunho, setFiltrosRascunho] = useState<RelatorioQuery>(filtrosIniciais);
+  const [filtrosAplicados, setFiltrosAplicados] = useState<RelatorioQuery>(filtrosIniciais);
+  const [filtrosRelatorioCarregado, setFiltrosRelatorioCarregado] = useState<RelatorioQuery | null>(null);
+  const [carregandoRelatorio, setCarregandoRelatorio] = useState(false);
+  const [downloadConfirmacao, setDownloadConfirmacao] = useState<{
+    formato: "csv" | "pdf";
+    contexto: "geral" | "filtrado";
+  } | null>(null);
   const [busca, setBusca] = useState("");
   const [filtroPedido, setFiltroPedido] = useState("todos");
   const [produtoEditando, setProdutoEditando] = useState<ProdutoResponse | null>(null);
@@ -109,6 +206,27 @@ export function AdminDashboard({ tema, nome, email, onToggleTema, onSair }: Admi
   useEffect(() => {
     void carregar();
   }, [carregar]);
+
+  const carregarRelatorio = useCallback(async (filtros: RelatorioQuery) => {
+    setCarregandoRelatorio(true);
+    setErro("");
+    const parametros = new URLSearchParams({ inicio: filtros.inicio, fim: filtros.fim });
+    if (filtros.produtoId) parametros.set("produtoId", filtros.produtoId);
+    if (filtros.categoriaId) parametros.set("categoriaId", filtros.categoriaId);
+    try {
+      const resultado = await api.get<RelatorioVendas>(`/admin/relatorios?${parametros.toString()}`);
+      setRelatorio(resultado);
+      setFiltrosRelatorioCarregado({ ...filtros });
+    } catch (err) {
+      setErro(err instanceof Error ? err.message : "Não foi possível carregar os relatórios.");
+    } finally {
+      setCarregandoRelatorio(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void carregarRelatorio(filtrosAplicados);
+  }, [carregarRelatorio, filtrosAplicados]);
 
   const produtosVisiveis = useMemo(() => {
     const termo = busca.trim().toLocaleLowerCase("pt-BR");
@@ -225,41 +343,71 @@ export function AdminDashboard({ tema, nome, email, onToggleTema, onSair }: Admi
     }
   };
 
-  const exportarCsv = () => {
-    const linhas = [
+  const linhasVisaoGeral = () => [
+    ["LOJA TECH - VISÃO GERAL"],
+    ["Indicador", "Valor"],
+    ["Produtos ativos", String(dashboard?.totalProdutos ?? 0)],
+    ["Clientes", String(dashboard?.totalUsuarios ?? 0)],
+    ["Pedidos", String(dashboard?.totalPedidos ?? 0)],
+    ["Vendas", BRL(dashboard?.totalVendas ?? 0)],
+    ["Ticket médio", BRL(dashboard?.ticketMedio ?? 0)],
+    [],
+    ["Vendas por dia", "Total"],
+    ...(dashboard?.vendasPorDia.map((dia) => [dia.dia ?? "", BRL(dia.total)]) ?? []),
+    [],
+    ["Vendas por categoria", "Unidades"],
+    ...(dashboard?.vendasPorCategoria.map((item) => [item.categoria, String(item.quantidade)]) ?? []),
+    [],
+    ["Produtos mais vendidos", "Unidades", "Preço atual"],
+    ...(dashboard?.maisVendidos.map((item) => [item.nome, String(item.vendidos), BRL(item.preco)]) ?? []),
+  ];
+
+  const obterLinhasRelatorio = () => {
+    if (!relatorio) return [];
+    const produtoFiltrado = produtos.find((item) => item.id === filtrosAplicados.produtoId);
+    const temFiltroDeCategoria = Boolean(filtrosAplicados.categoriaId || filtrosAplicados.produtoId);
+    const categoriaFiltrada = filtrosAplicados.categoriaId
+      ? (categorias.find((item) => item.id === filtrosAplicados.categoriaId)?.nome ?? "Categoria selecionada")
+      : produtoFiltrado?.categoria;
+    return [
+      ["LOJA TECH - RELATÓRIO DE VENDAS"],
+      ["Período", `${filtrosAplicados.inicio} a ${filtrosAplicados.fim}`],
+      ...(temFiltroDeCategoria ? [["Categoria", categoriaFiltrada ?? "Categoria não encontrada"]] : []),
+      ["Produto", produtos.find((item) => item.id === filtrosAplicados.produtoId)?.nome ?? "Todos"],
+      ["Observação", "Receita bruta dos itens, antes de descontos e frete."],
+      [],
       ["Indicador", "Valor"],
-      ["Produtos", String(dashboard?.totalProdutos ?? 0)],
-      ["Clientes", String(dashboard?.totalUsuarios ?? 0)],
-      ["Pedidos", String(dashboard?.totalPedidos ?? 0)],
-      ["Vendas", String(dashboard?.totalVendas ?? 0)],
-      ["Ticket médio", String(dashboard?.ticketMedio ?? 0)],
+      ["Receita bruta dos itens", BRL(relatorio.totalReceita)],
+      ["Pedidos no período", String(relatorio.totalPedidos)],
+      ["Ticket médio", BRL(relatorio.ticketMedio)],
+      ["Itens vendidos", String(relatorio.produtosVendidos)],
       [],
-      ["Vendas por dia", "Total"],
-      ...(dashboard?.vendasPorDia.map((dia) => [dia.dia ?? "", String(dia.total)]) ?? []),
+      ["Vendas por dia", "Receita"],
+      ...relatorio.vendasPorDia.map((dia) => [dia.dia, BRL(dia.total)]),
       [],
-      ["Vendas por categoria", "Unidades"],
-      ...(dashboard?.vendasPorCategoria.map((item) => [item.categoria, String(item.quantidade)]) ?? []),
+      ["Vendas por categoria", "Unidades", "Receita"],
+      ...relatorio.vendasPorCategoria.map((item) => [item.categoria, String(item.quantidade), BRL(item.total)]),
       [],
-      ["Produtos mais vendidos", "Unidades", "Preço"],
-      ...(dashboard?.maisVendidos.map((item) => [item.nome, String(item.vendidos), String(item.preco)]) ?? []),
+      ["Produto", "Unidades", "Preço atual", "Receita"],
+      ...relatorio.maisVendidos.map((item) => [item.nome, String(item.vendidos), BRL(item.preco), BRL(item.total)]),
       [],
-      ["Pedido", "Cliente", "Status", "Total", "Data"],
-      ...pedidos.map((pedido) => [
-        pedido.id,
-        pedido.cliente ?? "",
-        STATUS_LABEL[pedido.status],
-        String(pedido.total_final),
-        pedido.criado_em ?? "",
+      ["Pedidos por status", "Quantidade"],
+      ...Object.entries(relatorio.pedidosPorStatus).map(([status, total]) => [
+        STATUS_LABEL[status as StatusPedido] ?? status,
+        String(total),
       ]),
     ];
-    const csv =
-      "\uFEFF" + linhas.map((linha) => linha.map((campo) => `"${campo.replaceAll('"', '""')}"`).join(";")).join("\r\n");
-    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = "relatorio-loja-tech.csv";
-    link.click();
-    URL.revokeObjectURL(url);
+  };
+
+  const confirmarDownload = () => {
+    if (!downloadConfirmacao) return;
+    const { formato, contexto } = downloadConfirmacao;
+    const linhas = contexto === "filtrado" ? obterLinhasRelatorio() : linhasVisaoGeral();
+    const nomeBase = contexto === "filtrado" ? "relatorio-vendas-loja-tech" : "relatorio-visao-geral-loja-tech";
+    if (contexto === "filtrado" && !relatorio) return;
+    if (formato === "csv") baixarCsv(linhas, `${nomeBase}.csv`);
+    else baixarPdf(linhas, `${nomeBase}.pdf`);
+    setDownloadConfirmacao(null);
   };
 
   const maxVendas = Math.max(1, ...(dashboard?.vendasPorDia.map((item) => item.total) ?? []));
@@ -333,9 +481,6 @@ export function AdminDashboard({ tema, nome, email, onToggleTema, onSair }: Admi
             >
               {tema === "claro" ? <Moon size={18} /> : <Sun size={18} />}
             </button>
-            <button className="admin-icon-button" aria-label="Atualizar painel" onClick={() => void carregar()}>
-              <RefreshCw size={18} />
-            </button>
             <div className="admin-identity" title={`${nome} · ${email}`}>
               <div className="admin-avatar">{nome.slice(0, 1).toUpperCase()}</div>
               <span>
@@ -370,12 +515,46 @@ export function AdminDashboard({ tema, nome, email, onToggleTema, onSair }: Admi
             </div>
             {(secao === "visao-geral" || secao === "relatorios") && (
               <div className="admin-heading-actions">
-                <button className="admin-secondary-btn" onClick={exportarCsv}>
-                  <Download size={16} /> Exportar CSV
-                </button>
-                <button className="admin-primary-btn" onClick={() => window.print()}>
-                  <Printer size={16} /> Imprimir relatório
-                </button>
+                {secao === "relatorios" ? (
+                  <>
+                    <button
+                      className="admin-secondary-btn"
+                      type="button"
+                      onClick={() => setDownloadConfirmacao({ formato: "csv", contexto: "filtrado" })}
+                      disabled={!relatorio || carregandoRelatorio}
+                    >
+                      <Download size={16} /> Baixar planilha CSV
+                    </button>
+                    <button
+                      className="admin-primary-btn"
+                      type="button"
+                      onClick={() => setDownloadConfirmacao({ formato: "pdf", contexto: "filtrado" })}
+                      disabled={!relatorio || carregandoRelatorio}
+                    >
+                      <Download size={16} /> Baixar PDF
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      className="admin-secondary-btn"
+                      type="button"
+                      onClick={() => setDownloadConfirmacao({ formato: "csv", contexto: "geral" })}
+                    >
+                      <Download size={16} /> Baixar planilha CSV
+                    </button>
+                    <button
+                      className="admin-primary-btn"
+                      type="button"
+                      onClick={() => setDownloadConfirmacao({ formato: "pdf", contexto: "geral" })}
+                    >
+                      <Download size={16} /> Baixar PDF
+                    </button>
+                    <button className="admin-secondary-btn" type="button" onClick={() => setSecao("relatorios")}>
+                      <Filter size={16} /> Filtrar relatórios
+                    </button>
+                  </>
+                )}
               </div>
             )}
             {secao === "produtos" && (
@@ -410,7 +589,24 @@ export function AdminDashboard({ tema, nome, email, onToggleTema, onSair }: Admi
           ) : secao === "visao-geral" ? (
             <Overview dashboard={dashboard} pedidos={pedidos} maxVendas={maxVendas} maxCategoria={maxCategoria} />
           ) : secao === "relatorios" ? (
-            <Reports dashboard={dashboard} maxVendas={maxVendas} maxCategoria={maxCategoria} />
+            <Reports
+              relatorio={relatorio}
+              categorias={categorias}
+              produtos={produtos}
+              filtros={filtrosRascunho}
+              filtrosAplicados={filtrosAplicados}
+              filtrosCarregados={filtrosRelatorioCarregado}
+              carregando={carregandoRelatorio}
+              onFiltrosChange={setFiltrosRascunho}
+              onAplicar={() => setFiltrosAplicados({ ...filtrosRascunho })}
+              onLimpar={() => {
+                const padrao = filtrosIniciais();
+                setFiltrosRascunho(padrao);
+                setFiltrosAplicados(padrao);
+              }}
+              maxVendas={Math.max(1, ...(relatorio?.vendasPorDia.map((item) => item.total) ?? []))}
+              maxCategoria={Math.max(1, ...(relatorio?.vendasPorCategoria.map((item) => item.quantidade) ?? []))}
+            />
           ) : secao === "produtos" ? (
             <section className="admin-panel">
               <div className="admin-panel-heading">
@@ -706,155 +902,372 @@ export function AdminDashboard({ tema, nome, email, onToggleTema, onSair }: Admi
             </section>
           )}
         </div>
+        {downloadConfirmacao && (
+          <div className="admin-modal-backdrop" onClick={() => setDownloadConfirmacao(null)}>
+            <section
+              className="admin-download-dialog"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="titulo-download-relatorio"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <span className="admin-download-icon">
+                <Download size={20} />
+              </span>
+              <h2 id="titulo-download-relatorio">Confirmar download</h2>
+              <p>
+                Você quer baixar o arquivo{" "}
+                <strong>
+                  {downloadConfirmacao.contexto === "filtrado"
+                    ? "relatorio-vendas-loja-tech"
+                    : "relatorio-visao-geral-loja-tech"}
+                  .{downloadConfirmacao.formato}
+                </strong>
+                {downloadConfirmacao.contexto === "filtrado" ? " com os filtros selecionados?" : "?"}
+              </p>
+              <div className="admin-form-actions">
+                <button className="admin-secondary-btn" type="button" onClick={() => setDownloadConfirmacao(null)}>
+                  Cancelar
+                </button>
+                <button className="admin-primary-btn" type="button" onClick={confirmarDownload}>
+                  Sim, baixar arquivo
+                </button>
+              </div>
+            </section>
+          </div>
+        )}
       </main>
     </div>
   );
 }
 
 function Reports({
-  dashboard,
+  relatorio,
+  categorias,
+  produtos,
+  filtros,
+  filtrosAplicados,
+  filtrosCarregados,
+  carregando,
+  onFiltrosChange,
+  onAplicar,
+  onLimpar,
   maxVendas,
   maxCategoria,
 }: {
-  dashboard: Dashboard | null;
+  relatorio: RelatorioVendas | null;
+  categorias: CategoriaResponse[];
+  produtos: ProdutoResponse[];
+  filtros: RelatorioQuery;
+  filtrosAplicados: RelatorioQuery;
+  filtrosCarregados: RelatorioQuery | null;
+  carregando: boolean;
+  onFiltrosChange: (filtros: RelatorioQuery) => void;
+  onAplicar: () => void;
+  onLimpar: () => void;
   maxVendas: number;
   maxCategoria: number;
 }) {
-  if (!dashboard) return <EmptyState texto="Não foi possível carregar os relatórios." />;
-  const statusComPedidos = Object.entries(dashboard.pedidosPorStatus).filter(([, quantidade]) => quantidade > 0);
+  const statusComPedidos = Object.entries(relatorio?.pedidosPorStatus ?? {}).filter(([, quantidade]) => quantidade > 0);
+  const produtosDisponiveis = produtos.filter(
+    (produto) =>
+      !filtros.categoriaId ||
+      categorias.find((categoria) => categoria.id === filtros.categoriaId)?.nome === produto.categoria,
+  );
+  const periodoMudou =
+    filtros.inicio !== filtrosAplicados.inicio ||
+    filtros.fim !== filtrosAplicados.fim ||
+    filtros.produtoId !== filtrosAplicados.produtoId ||
+    filtros.categoriaId !== filtrosAplicados.categoriaId;
+  const filtrosForamCarregados =
+    filtrosCarregados !== null &&
+    filtrosCarregados.inicio === filtrosAplicados.inicio &&
+    filtrosCarregados.fim === filtrosAplicados.fim &&
+    filtrosCarregados.produtoId === filtrosAplicados.produtoId &&
+    filtrosCarregados.categoriaId === filtrosAplicados.categoriaId;
+  const resumoFiltrosAplicados = [
+    `${new Date(`${filtrosAplicados.inicio}T12:00:00`).toLocaleDateString("pt-BR")} a ${new Date(`${filtrosAplicados.fim}T12:00:00`).toLocaleDateString("pt-BR")}`,
+    filtrosAplicados.categoriaId
+      ? `Categoria: ${categorias.find((item) => item.id === filtrosAplicados.categoriaId)?.nome ?? "selecionada"}`
+      : null,
+    filtrosAplicados.produtoId
+      ? `Produto: ${produtos.find((item) => item.id === filtrosAplicados.produtoId)?.nome ?? "selecionado"}`
+      : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
   return (
     <>
-      <div className="admin-report-summary">
-        <article>
-          <span>Receita acumulada</span>
-          <strong>{BRL(dashboard.totalVendas)}</strong>
-        </article>
-        <article>
-          <span>Ticket médio</span>
-          <strong>{BRL(dashboard.ticketMedio)}</strong>
-        </article>
-        <article>
-          <span>Itens vendidos</span>
-          <strong>{dashboard.produtosVendidos}</strong>
-        </article>
-      </div>
-      <div className="admin-overview-grid">
-        <section className="admin-panel admin-chart-panel">
-          <div className="admin-panel-heading">
-            <div>
-              <h2>Receita por dia</h2>
-              <p>Vendas registradas no período exibido</p>
-            </div>
-            <span className="admin-chart-badge">
-              <BarChart3 size={16} /> {dashboard.vendasPorDia.length} dias
-            </span>
+      <section className="admin-report-filters" aria-label="Filtros dos relatórios">
+        <div className="admin-report-filter-heading">
+          <div>
+            <span className="admin-filter-kicker">ANÁLISE PERSONALIZADA</span>
+            <h2>Filtrar relatório</h2>
           </div>
-          {dashboard.vendasPorDia.length ? (
-            <div className="admin-bars" aria-label="Relatório de vendas por dia">
-              {dashboard.vendasPorDia.map((dia, index) => (
-                <div
-                  className="admin-bar-column"
-                  key={dia.dia ?? `total-${dia.total}`}
-                  title={`${dia.dia ?? "Dia"}: ${BRL(dia.total)}`}
-                >
-                  <span className="admin-bar-value">{dia.total ? BRL(dia.total) : ""}</span>
-                  <div className="admin-bar-track">
-                    <i style={{ height: `${Math.max(4, (dia.total / maxVendas) * 100)}%` }} />
-                  </div>
-                  <small>
-                    {dia.dia
-                      ? new Date(`${dia.dia}T12:00:00`).toLocaleDateString("pt-BR", { day: "2-digit", month: "short" })
-                      : `Dia ${index + 1}`}
-                  </small>
-                </div>
+          <p>Escolha o período e refine por produto ou categoria.</p>
+        </div>
+        <div className="admin-report-filter-grid">
+          <label className="admin-report-field">
+            <span>De</span>
+            <input
+              aria-label="Data inicial"
+              type="date"
+              value={filtros.inicio}
+              max={filtros.fim}
+              onChange={(event) => onFiltrosChange({ ...filtros, inicio: event.target.value })}
+            />
+          </label>
+          <label className="admin-report-field">
+            <span>Até</span>
+            <input
+              aria-label="Data final"
+              type="date"
+              value={filtros.fim}
+              min={filtros.inicio}
+              onChange={(event) => onFiltrosChange({ ...filtros, fim: event.target.value })}
+            />
+          </label>
+          <label className="admin-report-field">
+            <span>Categoria</span>
+            <select
+              aria-label="Categoria do produto"
+              value={filtros.categoriaId ?? ""}
+              onChange={(event) =>
+                onFiltrosChange({ ...filtros, categoriaId: event.target.value || undefined, produtoId: undefined })
+              }
+            >
+              <option value="">Todas as categorias</option>
+              {categorias.map((categoria) => (
+                <option value={categoria.id} key={categoria.id}>
+                  {categoria.nome}
+                </option>
               ))}
-            </div>
+            </select>
+          </label>
+          <label className="admin-report-field">
+            <span>Produto</span>
+            <select
+              aria-label="Produto"
+              value={filtros.produtoId ?? ""}
+              onChange={(event) => {
+                const produtoId = event.target.value || undefined;
+                const produto = produtos.find((item) => item.id === produtoId);
+                const categoriaId = produto
+                  ? categorias.find((item) => item.nome === produto.categoria)?.id
+                  : filtros.categoriaId;
+                onFiltrosChange({ ...filtros, produtoId, categoriaId });
+              }}
+            >
+              <option value="">Todos os produtos</option>
+              {produtosDisponiveis.map((produto) => (
+                <option value={produto.id} key={produto.id}>
+                  {produto.nome}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <div className="admin-report-filter-footer">
+          <span>Os valores consideram o subtotal dos itens antes de descontos e frete.</span>
+          <div>
+            <button className="admin-secondary-btn" type="button" onClick={onLimpar}>
+              Limpar filtros
+            </button>
+            <button
+              className="admin-primary-btn"
+              type="button"
+              onClick={onAplicar}
+              disabled={carregando || !filtros.inicio || !filtros.fim || filtros.inicio > filtros.fim}
+            >
+              <Search size={16} /> {carregando ? "Atualizando..." : "Aplicar filtros"}
+            </button>
+          </div>
+        </div>
+        <div
+          className={`admin-report-feedback ${carregando ? "is-loading" : filtrosForamCarregados ? "is-success" : periodoMudou ? "is-pending" : "is-error"}`}
+          role="status"
+          aria-live="polite"
+        >
+          {carregando ? (
+            <span className="admin-report-feedback-spinner" aria-hidden="true" />
+          ) : filtrosForamCarregados ? (
+            <Check size={17} aria-hidden="true" />
+          ) : periodoMudou ? (
+            <Filter size={17} aria-hidden="true" />
           ) : (
-            <EmptyState texto="Ainda não há vendas no período." />
+            <AlertTriangle size={17} aria-hidden="true" />
           )}
-        </section>
-        <section className="admin-panel">
-          <div className="admin-panel-heading">
-            <div>
-              <h2>Distribuição por categoria</h2>
-              <p>Unidades vendidas</p>
-            </div>
+          <span>
+            <strong>
+              {carregando
+                ? "Atualizando gráficos"
+                : filtrosForamCarregados
+                  ? "Relatório atualizado"
+                  : periodoMudou
+                    ? "Filtros alterados"
+                    : "Não foi possível atualizar o relatório"}
+            </strong>
+            <small>
+              {carregando
+                ? `Aplicando: ${resumoFiltrosAplicados}`
+                : filtrosForamCarregados
+                  ? `Os gráficos abaixo mostram: ${resumoFiltrosAplicados}`
+                  : periodoMudou
+                    ? "Clique em “Aplicar filtros” para atualizar os gráficos."
+                    : "Tente aplicar os filtros novamente."}
+            </small>
+          </span>
+        </div>
+      </section>
+      {carregando && !relatorio ? (
+        <div className="admin-loading">
+          <span className="admin-spinner" /> Preparando relatório...
+        </div>
+      ) : !relatorio ? (
+        <EmptyState texto="Não foi possível carregar os relatórios." />
+      ) : (
+        <>
+          <div className="admin-report-summary">
+            <article>
+              <span>Receita bruta dos itens</span>
+              <strong>{BRL(relatorio.totalReceita)}</strong>
+            </article>
+            <article>
+              <span>Pedidos no período</span>
+              <strong>{relatorio.totalPedidos}</strong>
+            </article>
+            <article>
+              <span>Itens vendidos</span>
+              <strong>{relatorio.produtosVendidos}</strong>
+            </article>
           </div>
-          <div className="admin-category-bars">
-            {dashboard.vendasPorCategoria.length ? (
-              dashboard.vendasPorCategoria.map((item) => (
-                <div className="admin-category-row" key={item.categoria}>
-                  <div>
-                    <span>{item.categoria}</span>
-                    <strong>{item.quantidade} un.</strong>
-                  </div>
-                  <div className="admin-progress">
-                    <i style={{ width: `${Math.max(3, (item.quantidade / maxCategoria) * 100)}%` }} />
-                  </div>
+          <div className="admin-report-average">
+            Ticket médio dos pedidos filtrados: <strong>{BRL(relatorio.ticketMedio)}</strong>
+          </div>
+          <div className="admin-overview-grid">
+            <section className="admin-panel admin-chart-panel">
+              <div className="admin-panel-heading">
+                <div>
+                  <h2>Receita por dia</h2>
+                  <p>Subtotal dos itens vendidos por dia</p>
                 </div>
-              ))
-            ) : (
-              <EmptyState texto="Sem vendas por categoria." />
-            )}
-          </div>
-        </section>
-      </div>
-      <div className="admin-overview-grid">
-        <section className="admin-panel">
-          <div className="admin-panel-heading">
-            <div>
-              <h2>Desempenho de produtos</h2>
-              <p>Produtos ordenados por unidades vendidas</p>
-            </div>
-          </div>
-          {dashboard.maisVendidos.length ? (
-            <div className="admin-table-wrap">
-              <table className="admin-table">
-                <thead>
-                  <tr>
-                    <th>Produto</th>
-                    <th>Unidades</th>
-                    <th>Preço atual</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {dashboard.maisVendidos.map((produto) => (
-                    <tr key={produto.id}>
-                      <td>
-                        <strong>{produto.nome}</strong>
-                      </td>
-                      <td>{produto.vendidos}</td>
-                      <td className="admin-money">{BRL(produto.preco)}</td>
-                    </tr>
+                <span className="admin-chart-badge">
+                  <BarChart3 size={16} /> {relatorio.vendasPorDia.length} dias
+                </span>
+              </div>
+              {relatorio.vendasPorDia.length ? (
+                <div className="admin-bars" aria-label="Relatório de vendas por dia">
+                  {relatorio.vendasPorDia.map((dia, index) => (
+                    <div
+                      className="admin-bar-column"
+                      key={dia.dia ?? `total-${dia.total}`}
+                      title={`${dia.dia ?? "Dia"}: ${BRL(dia.total)}`}
+                    >
+                      <span className="admin-bar-value">{dia.total ? BRL(dia.total) : ""}</span>
+                      <div className="admin-bar-track">
+                        <i style={{ height: `${Math.max(4, (dia.total / maxVendas) * 100)}%` }} />
+                      </div>
+                      <small>
+                        {dia.dia
+                          ? new Date(`${dia.dia}T12:00:00`).toLocaleDateString("pt-BR", {
+                              day: "2-digit",
+                              month: "short",
+                            })
+                          : `Dia ${index + 1}`}
+                      </small>
+                    </div>
                   ))}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <EmptyState texto="Ainda não há produtos vendidos." />
-          )}
-        </section>
-        <section className="admin-panel">
-          <div className="admin-panel-heading">
-            <div>
-              <h2>Status dos pedidos</h2>
-              <p>Quantidade por etapa</p>
-            </div>
-          </div>
-          {statusComPedidos.length ? (
-            <div className="admin-report-statuses">
-              {statusComPedidos.map(([status, quantidade]) => (
-                <div key={status}>
-                  <span className={`admin-status ${status}`}>{STATUS_LABEL[status as StatusPedido] ?? status}</span>
-                  <strong>{quantidade}</strong>
                 </div>
-              ))}
-            </div>
-          ) : (
-            <EmptyState texto="Nenhum pedido registrado." />
-          )}
-        </section>
-      </div>
+              ) : (
+                <EmptyState texto="Ainda não há vendas no período." />
+              )}
+            </section>
+            <section className="admin-panel">
+              <div className="admin-panel-heading">
+                <div>
+                  <h2>Distribuição por categoria</h2>
+                  <p>Unidades vendidas</p>
+                </div>
+              </div>
+              <div className="admin-category-bars">
+                {relatorio.vendasPorCategoria.length ? (
+                  relatorio.vendasPorCategoria.map((item) => (
+                    <div className="admin-category-row" key={item.categoria}>
+                      <div>
+                        <span>{item.categoria}</span>
+                        <strong>
+                          {item.quantidade} un. · {BRL(item.total)}
+                        </strong>
+                      </div>
+                      <div className="admin-progress">
+                        <i style={{ width: `${Math.max(3, (item.quantidade / maxCategoria) * 100)}%` }} />
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <EmptyState texto="Sem vendas por categoria." />
+                )}
+              </div>
+            </section>
+          </div>
+          <div className="admin-overview-grid">
+            <section className="admin-panel">
+              <div className="admin-panel-heading">
+                <div>
+                  <h2>Desempenho de produtos</h2>
+                  <p>Produtos ordenados por unidades vendidas</p>
+                </div>
+              </div>
+              {relatorio.maisVendidos.length ? (
+                <div className="admin-table-wrap">
+                  <table className="admin-table">
+                    <thead>
+                      <tr>
+                        <th>Produto</th>
+                        <th>Unidades</th>
+                        <th>Receita</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {relatorio.maisVendidos.map((produto) => (
+                        <tr key={produto.id}>
+                          <td>
+                            <strong>{produto.nome}</strong>
+                          </td>
+                          <td>{produto.vendidos}</td>
+                          <td className="admin-money">{BRL(produto.total)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <EmptyState texto="Ainda não há produtos vendidos." />
+              )}
+            </section>
+            <section className="admin-panel">
+              <div className="admin-panel-heading">
+                <div>
+                  <h2>Status dos pedidos</h2>
+                  <p>Quantidade por etapa</p>
+                </div>
+              </div>
+              {statusComPedidos.length ? (
+                <div className="admin-report-statuses">
+                  {statusComPedidos.map(([status, quantidade]) => (
+                    <div key={status}>
+                      <span className={`admin-status ${status}`}>{STATUS_LABEL[status as StatusPedido] ?? status}</span>
+                      <strong>{quantidade}</strong>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <EmptyState texto="Nenhum pedido registrado." />
+              )}
+            </section>
+          </div>
+        </>
+      )}
     </>
   );
 }
