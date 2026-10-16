@@ -554,6 +554,7 @@ footer {
   padding-bottom: 16px;
   border-bottom: 1px solid var(--line);
 }
+/* Miniatura quadrada e foto quadrada: `cover` não corta nada. */
 .cart-item img {
   width: 76px;
   height: 76px;
@@ -1184,9 +1185,22 @@ nav a {
   transform: translateY(-4px);
 }
 
+/* A foto do produto no cartão.
+
+   A caixa é quadrada porque as fotos são: `apps/web/public/imagens/` tem todas
+   em 1000x1000. Com a caixa quadrada e o arquivo quadrado, `cover` não corta
+   nada — não sobra fundo em volta da foto, e o produto não perde pedaço.
+
+   Antes as imagens tinham proporções diferentes entre si (a cadeira 0,75, o
+   teclado 1,51) e a caixa era deitada: o corte caía em cima do produto, e o
+   teclado virava uma faixa de teclas. A saída foi acertar os arquivos, não a
+   caixa — cortar e emoldurar com fundo na interface dá o mesmo resultado feio
+   por dois caminhos. */
 .product-card img {
-  height: 220px;
+  aspect-ratio: 1 / 1;
+  height: auto;
   object-fit: cover;
+  object-position: center;
 }
 
 .product-body {
@@ -1446,18 +1460,21 @@ nav a {
   min-width: 0;
 }
 
+/* A foto no modal.
+
+   `cover` preenche a coluna inteira, e não `contain`: a coluna é mais alta que
+   larga, então `contain` deixaria a foto quadrada no meio da coluna, com faixas
+   vazias acima e abaixo. Cortar aqui é seguro porque a foto é do próprio
+   produto — o corte antigo quebrava a imagem porque a foto não era dele.
+
+   Sem `padding`: padding em `<img>` aumenta a caixa e empurra o conteúdo do
+   modal para fora, e o `box-sizing: border-box` global segura a largura mas
+   não a altura. */
 .modal-grid img {
   border-radius: 20px;
-  /* `contain` e não `cover`: `cover` preenche a caixa cortando as pontas da
-     foto, e aí aparecia uma fatia de um smartwatch no lugar da câmera. Aqui a
-     imagem inteira aparece, sem esticar nem achatar, e o `object-position`
-     padrão (50% 50%) já centraliza.
-     Sem fundo: colorir a sobra deixava duas faixas escuras ocupando quase
-     metade da caixa e a coisa parecia quebrada. O fundo do próprio modal é o
-     palco, e a borda fininha só marca onde termina a área da foto. */
   width: 100%;
   height: 100%;
-  object-fit: contain;
+  object-fit: cover;
   object-position: center;
   border: 1px solid var(--line);
 }
@@ -1799,8 +1816,11 @@ nav a {
 .recent-section {
   margin-top: 42px;
 }
+/* O cartão compacto mantinha `height: 150px`, que com foto quadrada cortava as
+   laterais do produto. A caixa segue a proporção da foto, como nos outros
+   cartões; quem encolhe aqui é a coluna da grade, não a foto. */
 .compact img {
-  height: 150px;
+  height: auto;
 }
 .compact .product-body {
   padding: 15px;
@@ -2022,7 +2042,6 @@ nav a {
   height: 52px;
   border-radius: 8px;
   object-fit: cover;
-  background: var(--paper);
 }
 .fav-abrir:hover .fav-info strong {
   text-decoration: underline;

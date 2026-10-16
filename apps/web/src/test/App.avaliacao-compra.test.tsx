@@ -245,6 +245,16 @@ describe("avaliação liberada pela compra", () => {
     expect(screen.queryByText(/A avaliação fica disponível logo após a compra/)).not.toBeInTheDocument();
   });
 
+  it("avaliar no produto atualiza a elegibilidade e recarrega a lista uma vez", async () => {
+    montarApi().comCompraJaFeita();
+    await abrirAppLogado();
+    await abrirProduto();
+    fireEvent.click(await screen.findByRole("button", { name: "Enviar avaliação" }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Enviar avaliação" })).not.toBeInTheDocument());
+    expect(get.mock.calls.filter(([url]) => url === "/avaliacoes/prod-cadeira")).toHaveLength(2);
+    expect(post.mock.calls.filter(([url]) => url === "/avaliacoes/prod-cadeira")).toHaveLength(1);
+  });
+
   it("trava de novo logo depois de avaliar", async () => {
     await abrirAppLogado();
     await comprarPeloFluxoNormal();
@@ -390,5 +400,27 @@ describe("reavaliação após nova compra", () => {
     expect(await screen.findByText("O que você achou?")).toBeInTheDocument();
     expect(screen.queryByText(/Sua avaliação atual/)).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Escolha uma nota" })).toBeInTheDocument();
+  });
+});
+
+describe("nova tentativa de confirmação da compra", () => {
+  beforeEach(() => {
+    montarApi();
+    localStorage.clear();
+  });
+
+  afterEach(() => cleanup());
+
+  it("reutiliza a chave e os itens depois de falha de conexão", async () => {
+    post.mockRejectedValueOnce(new Error("Conexão interrompida. Tente novamente."));
+    await abrirAppLogado();
+    await comprarPeloFluxoNormal();
+    expect(await screen.findByText(/Conexão interrompida/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Confirmar compra" }));
+    expect(await screen.findByText("Compra confirmada!")).toBeInTheDocument();
+    const tentativas = post.mock.calls.filter(([url]) => url === "/pedidos");
+    expect(tentativas).toHaveLength(2);
+    expect(tentativas[1]?.[1]).toEqual(tentativas[0]?.[1]);
+    expect(tentativas[0]?.[1]).toMatchObject({ chaveIdempotencia: expect.any(String) });
   });
 });

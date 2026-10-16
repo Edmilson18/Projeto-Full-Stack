@@ -1,6 +1,7 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { ADMIN, iniciarContexto, type Cliente } from "./ajuda.js";
 import { limparSessoes } from "../rotas/auth.js";
+import { randomUUID } from "node:crypto";
 
 let contexto: Awaited<ReturnType<typeof iniciarContexto>>;
 let novo: () => Cliente;
@@ -11,7 +12,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await contexto.encerrar();
+  await contexto?.encerrar();
 });
 
 /** Cria um cliente novo, autenticado, com papel de cliente comum. */
@@ -311,6 +312,46 @@ describe("produtos", () => {
     });
     expect(semCategoria.status).toBe(400);
   });
+
+  it("aceita foto local e endereço externo, e recusa o que não é imagem", async () => {
+    const cliente = novo();
+    await cliente.post("/api/login", ADMIN);
+
+    const corpo = {
+      descricao: "A foto faz parte do pacote de imagens locais.",
+      preco: 10,
+      quantidade: 1,
+      categoriaId: "cat-outros",
+    };
+
+    // Caminho local servido pelo próprio site: é o formato das fotos do seed,
+    // e a validação antiga só aceitava http/https.
+    const local = await cliente.post("/api/produtos", {
+      ...corpo,
+      nome: "Produto com foto local",
+      imagem: "/imagens/teclado.jpg",
+    });
+    expect(local.status).toBe(201);
+    expect(local.corpo.produto.imagem).toBe("/imagens/teclado.jpg");
+
+    // O endereço externo continua sendo aceito: fotos de catálogo de
+    // terceiros ainda são um formato válido.
+    const externa = await cliente.post("/api/produtos", {
+      ...corpo,
+      nome: "Produto com foto externa",
+      imagem: "https://exemplo.com/foto.jpg",
+    });
+    expect(externa.status).toBe(201);
+
+    // Sem a barra o navegador resolveria contra a página atual
+    // (`/produto/imagens/x.jpg`) e a foto quebraria sem erro nenhum.
+    const relativo = await cliente.post("/api/produtos", {
+      ...corpo,
+      nome: "Produto com foto relativa",
+      imagem: "imagens/teclado.jpg",
+    });
+    expect(relativo.status).toBe(400);
+  });
 });
 
 describe("avaliação abre a cada compra e fecha ao avaliar", () => {
@@ -340,6 +381,44 @@ describe("avaliação abre a cada compra e fecha ao avaliar", () => {
     const resposta = await cliente.post("/api/avaliacoes/prod-cam", { nota: 5, comentario: "Ótima câmera" });
 
     expect(resposta.status).toBe(201);
+  });
+
+  it("apenas uma avaliação simultânea consome a janela da compra", async () => {
+    const cliente = await clienteComum();
+    const { inserirProduto, listarCategorias } = await import("../database.js");
+    const produtoId = randomUUID();
+    const categoriaId = (await listarCategorias())[0]!.id;
+    await inserirProduto({
+      id: produtoId,
+      nome: "Avaliação concorrente",
+      descricao: "Teste isolado",
+      preco: 10,
+      quantidade: 2,
+      categoria_id: categoriaId,
+    });
+    expect((await cliente.post("/api/pedidos", { itens: [{ produtoId, quantidade: 1 }] })).status).toBe(201);
+    const respostas = await Promise.all([
+      cliente.post(`/api/avaliacoes/${produtoId}`, { nota: 2, comentario: "Primeira" }),
+      cliente.post(`/api/avaliacoes/${produtoId}`, { nota: 5, comentario: "Segunda" }),
+    ]);
+    expect(respostas.map((r) => r.status).toSorted((a, b) => a - b)).toEqual([201, 403]);
+    const conta = await cliente.get("/api/conta");
+    expect(conta.corpo.minhasAvaliacoes).toHaveLength(1);
+    const vencedora = respostas[0]?.status === 201 ? 2 : 5;
+    expect(conta.corpo.minhasAvaliacoes[0].nota).toBe(vencedora);
+  });
+
+  it.each(["12", "XX", "S"])("recusa a UF inválida %s", async (estado) => {
+    const cliente = await clienteComum();
+    const resposta = await cliente.put("/api/conta/endereco", {
+      cep: "01001000",
+      rua: "Praça da Sé",
+      numero: "1",
+      bairro: "Sé",
+      cidade: "São Paulo",
+      estado,
+    });
+    expect(resposta.status).toBe(400);
   });
 
   it("conta a compra em qualquer pedido que não esteja cancelado", async () => {
@@ -542,20 +621,19 @@ describe("pedidos pela API", () => {
 });
 
 describe("recuperação de senha", () => {
-  it("não devolve o token quando NODE_ENV não é development", async () => {
-    // A suite roda com NODE_ENV=test, que não é "production", então este teste
-    // documenta o comportamento padrão. O gate de produção é coberto pelo
-    // smoke test manual, rodando o servidor com NODE_ENV=production.
+  it("não expõe token nem promete envio quando a recuperação está desabilitada", async () => {
     const resposta = await novo().post("/api/recuperar-senha", { email: ADMIN.email });
-    expect(resposta.status).toBe(200);
-    expect(resposta.corpo.mensagem).toMatch(/instruções/i);
+    expect(resposta.status).toBe(503);
+    expect(resposta.corpo.erro).toMatch(/indisponível/i);
+    expect(resposta.corpo).not.toHaveProperty("token");
   });
 
   it("não revela se o e-mail existe", async () => {
     const existente = await novo().post("/api/recuperar-senha", { email: ADMIN.email });
     const inexistente = await novo().post("/api/recuperar-senha", { email: "ninguem@exemplo.com" });
     expect(inexistente.status).toBe(existente.status);
-    expect(inexistente.corpo.mensagem).toBe(existente.corpo.mensagem);
+    expect(inexistente.corpo).toEqual(existente.corpo);
+    expect(inexistente.corpo).not.toHaveProperty("token");
   });
 
   it("redefine a senha com token válido e recusa token inválido", async () => {
@@ -563,8 +641,8 @@ describe("recuperação de senha", () => {
     const email = `reset-${Math.random().toString(36).slice(2, 8)}@exemplo.com`;
     await cliente.post("/api/cadastro", { nome: "Reset Teste", email, senha: "senhaAntiga1" });
 
-    const solicitacao = await novo().post("/api/recuperar-senha", { email });
-    const token = solicitacao.corpo.token;
+    const { criarTokenRedefinicaoSenha } = await import("../database.js");
+    const token = await criarTokenRedefinicaoSenha(email);
     expect(typeof token).toBe("string");
 
     const invalido = await novo().post("/api/redefinir-senha", { token: "x".repeat(40), senha: "novaSenha123" });
@@ -575,6 +653,42 @@ describe("recuperação de senha", () => {
 
     const login = await novo().post("/api/login", { email, senha: "novaSenha123" });
     expect(login.status).toBe(200);
+  });
+
+  it.each([undefined, "test", "production", "staging"])(
+    "recusa expor token em NODE_ENV=%s mesmo com flag ativa",
+    async (nodeEnv) => {
+      vi.stubEnv("NODE_ENV", nodeEnv);
+      vi.stubEnv("ALLOW_LOCAL_PASSWORD_RESET", "true");
+      try {
+        const resposta = await novo().post("/api/recuperar-senha", { email: ADMIN.email });
+        expect(resposta.status).toBe(503);
+        expect(resposta.corpo).not.toHaveProperty("token");
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    },
+  );
+
+  it("permite demonstrar a redefinição somente com development e flag explícita", async () => {
+    const email = `local-${randomUUID()}@exemplo.com`;
+    const cliente = novo();
+    await cliente.post("/api/cadastro", { nome: "Demonstração Local", email, senha: "senhaAntiga123" });
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("ALLOW_LOCAL_PASSWORD_RESET", "false");
+    try {
+      expect((await novo().post("/api/recuperar-senha", { email })).status).toBe(503);
+      vi.stubEnv("ALLOW_LOCAL_PASSWORD_RESET", "true");
+      const resposta = await novo().post("/api/recuperar-senha", { email });
+      expect(resposta.status).toBe(200);
+      expect(typeof resposta.corpo.token).toBe("string");
+      expect(
+        (await novo().post("/api/redefinir-senha", { token: resposta.corpo.token, senha: "senhaNova123" })).status,
+      ).toBe(200);
+      expect((await cliente.get("/api/sessao")).corpo.usuario).toBeNull();
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });
 
@@ -796,6 +910,18 @@ describe("auditoria", () => {
 
   it("registra a mudanca de status com o valor anterior", async () => {
     const cliente = await clienteComum();
+    expect(
+      (
+        await cliente.put("/api/conta/endereco", {
+          cep: "01001000",
+          rua: "Praça da Sé",
+          numero: "1",
+          bairro: "Sé",
+          cidade: "São Paulo",
+          estado: "sp",
+        })
+      ).status,
+    ).toBe(200);
     const criado = await cliente.post("/api/pedidos", { itens: [{ produtoId: "prod-mouse", quantidade: 1 }] });
     const id = criado.corpo.pedido.id;
 
@@ -820,6 +946,27 @@ describe("auditoria", () => {
 });
 
 describe("rate limit", () => {
+  it("não aceita X-Forwarded-For arbitrário para contornar o limite", async () => {
+    const comLimite = await iniciarContexto({ semRateLimit: false });
+    try {
+      const respostas: number[] = [];
+      for (let tentativa = 0; tentativa < 12; tentativa++) {
+        const resposta = await comLimite
+          .novoCliente()
+          .post(
+            "/api/login",
+            { email: "x@y.com", senha: "errada123" },
+            { "x-forwarded-for": `203.0.113.${tentativa + 1}` },
+          );
+        respostas.push(resposta.status);
+      }
+      expect(respostas.slice(0, 10)).toEqual(Array(10).fill(401));
+      expect(respostas.slice(10)).toEqual([429, 429]);
+    } finally {
+      await comLimite.encerrar();
+    }
+  });
+
   it("bloqueia quando o limite é excedido", async () => {
     // Contexto separado, com o rate limit ligado. A suíte principal roda sem
     // ele, senão as próprias requisições dos outros testes seriam barradas.
@@ -835,6 +982,25 @@ describe("rate limit", () => {
       expect(respostas).toContain(429);
     } finally {
       await comLimite.encerrar();
+    }
+  });
+});
+
+describe("reenvio de pedido", () => {
+  it("outra instância devolve o pedido original para a mesma tentativa", async () => {
+    const cliente = await clienteComum();
+    const entrada = { chaveIdempotencia: randomUUID(), itens: [{ produtoId: "prod-teclado", quantidade: 1 }] };
+    const criado = await cliente.post("/api/pedidos", entrada);
+    expect(criado.status).toBe(201);
+    const segundoApp = await iniciarContexto();
+    try {
+      const repetido = await segundoApp.novoCliente().post("/api/pedidos", entrada, { cookie: cliente.cookie ?? "" });
+      expect(repetido.status).toBe(201);
+      expect(repetido.corpo).toEqual(criado.corpo);
+      const pedidos = (await cliente.get("/api/conta")).corpo.pedidos;
+      expect(pedidos).toHaveLength(1);
+    } finally {
+      await segundoApp.encerrar();
     }
   });
 });

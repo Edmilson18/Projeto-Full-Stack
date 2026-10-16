@@ -2,13 +2,13 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
-    // Os módulos rodam no Node: SQLite, crypto, fs.
+    // Integração com PostgreSQL e módulos nativos do Node.
     environment: "node",
     include: ["src/**/*.test.ts"],
     setupFiles: ["src/testes/preparacao.ts"],
 
-    // Um único banco SQLite não tolera vários processos gravando ao mesmo
-    // tempo. No Vitest 4+ o `singleFork` virou `maxWorkers: 1`.
+    // Mantém o consumo de conexões previsível durante as suítes de integração.
+    // Cenários concorrentes são coordenados dentro de cada teste.
     pool: "forks",
     maxWorkers: 1,
     fileParallelism: false,
@@ -17,6 +17,8 @@ export default defineConfig({
     // a cada execução, em src/testes/preparacao.ts.
     env: {
       NODE_ENV: "test",
+      ADMIN_PASSWORD: "admin123",
+      TRUSTED_PROXIES: "",
     },
 
     coverage: {

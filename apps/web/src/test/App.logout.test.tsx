@@ -28,6 +28,49 @@ const PRODUTOS = [
   },
 ];
 
+describe("entrada e catálogo", () => {
+  afterEach(() => {
+    cleanup();
+    window.history.replaceState(null, "", "/");
+  });
+
+  it("link de redefinição abre o formulário mesmo com sessão existente", async () => {
+    mockApi(USUARIO);
+    window.history.replaceState(null, "", "/?resetToken=token-teste&origem=portfolio#conta");
+    render(<App />);
+    expect(await screen.findByRole("dialog", { name: "Definir nova senha" })).toBeInTheDocument();
+    expect(window.location.search).toBe("?origem=portfolio");
+    expect(window.location.hash).toBe("#conta");
+  });
+
+  it("erro de catálogo oferece nova tentativa e mostra os produtos ao recuperar", async () => {
+    mockApi(null);
+    let falhar = true;
+    get.mockImplementation((url: string) => {
+      if (url === "/sessao") return Promise.resolve({ usuario: null });
+      if (url === "/produtos")
+        return falhar ? Promise.reject(new Error("Conexão indisponível")) : Promise.resolve(PRODUTOS);
+      return Promise.resolve([]);
+    });
+    render(<App />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Não foi possível carregar o catálogo");
+    falhar = false;
+    fireEvent.click(screen.getByRole("button", { name: "Tentar novamente" }));
+    await screen.findAllByText("Headset Wireless Studio");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("adicionar pelo modal também exige login", async () => {
+    mockApi(null);
+    render(<App />);
+    const nomes = await screen.findAllByText("Headset Wireless Studio");
+    fireEvent.click(nomes[0]!);
+    fireEvent.click(await screen.findByRole("button", { name: "Adicionar ao carrinho" }));
+    expect(await screen.findByText("Faça login para comprar")).toBeInTheDocument();
+    expect(JSON.parse(localStorage.getItem("carrinho") ?? "[]")).toEqual([]);
+  });
+});
+
 function mockApi(usuario: unknown) {
   get.mockReset();
   post.mockReset();

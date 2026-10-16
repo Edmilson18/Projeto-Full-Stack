@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { FavoritoResponse } from "@loja/shared";
 import { api, ApiError } from "../lib/api.js";
+import { escopoSessaoAtual } from "../lib/sessao.js";
 
 type UseFavoritosOptions = {
   usuarioLogado: boolean;
+  usuarioId?: string | null;
   onErro?: (msg: string) => void;
 };
 
@@ -27,8 +29,16 @@ const CHAVE_FAVORITOS_LEGADA = "favoritosLoja";
  * limpava no logout, então quem saía da conta continuava vendo o coração
  * marcado.
  */
-export function useFavoritos({ usuarioLogado, onErro }: UseFavoritosOptions) {
-  const [favoritos, setFavoritos] = useState<string[]>([]);
+export function useFavoritos({ usuarioLogado, usuarioId, onErro }: UseFavoritosOptions) {
+  const dono = usuarioLogado ? (usuarioId ?? "sessao") : null;
+  const [estado, setEstado] = useState<{ dono: string | null; ids: string[] }>({ dono, ids: [] });
+  const favoritos = estado.dono === dono ? estado.ids : [];
+  const donoAtual = useRef(dono);
+  const geracao = useRef(0);
+  const numeroOperacao = useRef(0);
+  const confirmados = useRef(new Set<string>());
+  const intencoes = useRef(new Map<string, { numero: number; desejado: boolean }>());
+  const filas = useRef(new Map<string, Promise<void>>());
 
   // O `onErro` chega como `setMensagem`, que o React garante estável, mas a
   // assinatura permite qualquer função. Guardar numa ref deixa o `catch` usar
@@ -50,41 +60,82 @@ export function useFavoritos({ usuarioLogado, onErro }: UseFavoritosOptions) {
   // nenhuma — e a chamada é idempotente, então rodar com a lista já vazia não
   // provoca renderização extra.
   useEffect(() => {
-    if (!usuarioLogado) setFavoritos([]);
-  }, [usuarioLogado]);
+    donoAtual.current = dono;
+    geracao.current++;
+    confirmados.current.clear();
+    intencoes.current.clear();
+    filas.current.clear();
+    setEstado({ dono, ids: [] });
+    return () => {
+      geracao.current++;
+    };
+  }, [dono]);
+
+  const setFavoritos = useCallback(
+    (ids: string[]) => {
+      if (!dono || donoAtual.current !== dono) return;
+      confirmados.current = new Set(ids);
+      const atuais = new Set(ids);
+      for (const [id, intencao] of intencoes.current) {
+        if (intencao.desejado) atuais.add(id);
+        else atuais.delete(id);
+      }
+      setEstado({ dono, ids: [...atuais] });
+    },
+    [dono],
+  );
 
   const alternarFavorito = useCallback(
     async (produtoId: string) => {
       // Sem sessão não há onde persistir o favorito, então a função é um no-op
       // em vez de pintar um coração que o servidor nunca vai confirmar.
-      if (!usuarioLogado) return;
+      if (!dono || donoAtual.current !== dono) return;
+      const desejado = !favoritos.includes(produtoId);
+      const numero = ++numeroOperacao.current;
+      const atual = geracao.current;
+      const escopo = escopoSessaoAtual();
+      const vigente = () => atual === geracao.current && escopo === escopoSessaoAtual();
+      intencoes.current.set(produtoId, { numero, desejado });
+      setEstado((anterior) => {
+        const ids = new Set(anterior.dono === dono ? anterior.ids : []);
+        if (desejado) ids.add(produtoId);
+        else ids.delete(produtoId);
+        return { dono, ids: [...ids] };
+      });
 
-      const anterior = favoritos;
-      const estavaFavorito = anterior.includes(produtoId);
-
-      // A tela continua calculando o estado novo para responder na hora, mas o
-      // servidor recebe o estado **desejado**, não um "alternar". Se a chamada
-      // for repetida — clique duplo, retry de rede — o resultado é o mesmo, em
-      // vez de o favorito ficar invertido.
-      setFavoritos(estavaFavorito ? anterior.filter((id) => id !== produtoId) : [...anterior, produtoId]);
-
-      try {
-        await (estavaFavorito
-          ? api.delete<FavoritoResponse>(`/favoritos/${encodeURIComponent(produtoId)}`)
-          : api.put<FavoritoResponse>(`/favoritos/${encodeURIComponent(produtoId)}`, {}));
-      } catch (err) {
-        // Reverte ao estado anterior: o servidor é a fonte da verdade, e o
-        // `catch` impede que a tela mostre um favorito que o banco não aceitou.
-        setFavoritos(anterior);
-        const avisar = onErroRef.current;
-        if (err instanceof ApiError && err.status === 401) {
-          avisar?.("Sua sessão expirou. Faça login novamente.");
-        } else if (err instanceof Error) {
-          avisar?.(err.message);
-        }
-      }
+      // Escritas do mesmo produto seguem a ordem dos cliques; outros produtos são independentes.
+      const operacao = (filas.current.get(produtoId) ?? Promise.resolve())
+        .then(async () => {
+          if (!vigente()) return;
+          await (desejado
+            ? api.put<FavoritoResponse>(`/favoritos/${encodeURIComponent(produtoId)}`, {})
+            : api.delete<FavoritoResponse>(`/favoritos/${encodeURIComponent(produtoId)}`));
+          if (!vigente()) return;
+          if (desejado) confirmados.current.add(produtoId);
+          else confirmados.current.delete(produtoId);
+        })
+        .catch((err: unknown) => {
+          if (!vigente() || intencoes.current.get(produtoId)?.numero !== numero) return;
+          const confirmado = confirmados.current.has(produtoId);
+          setEstado((anterior) => {
+            if (anterior.dono !== dono) return anterior;
+            const ids = new Set(anterior.ids);
+            if (confirmado) ids.add(produtoId);
+            else ids.delete(produtoId);
+            return { dono, ids: [...ids] };
+          });
+          const avisar = onErroRef.current;
+          if (err instanceof ApiError && err.status === 401) avisar?.("Sua sessão expirou. Faça login novamente.");
+          else if (err instanceof Error) avisar?.(err.message);
+        })
+        .finally(() => {
+          if (vigente() && intencoes.current.get(produtoId)?.numero === numero) intencoes.current.delete(produtoId);
+          if (filas.current.get(produtoId) === operacao) filas.current.delete(produtoId);
+        });
+      filas.current.set(produtoId, operacao);
+      await operacao;
     },
-    [favoritos, usuarioLogado],
+    [favoritos, dono],
   );
 
   return { favoritos, alternarFavorito, setFavoritos };

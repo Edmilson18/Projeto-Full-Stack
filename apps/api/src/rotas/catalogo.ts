@@ -36,9 +36,9 @@ import {
   salvarAvaliacao,
   atualizarEnderecoUsuario,
   atualizarProduto,
-  podeAvaliarProduto,
 } from "../database.js";
 import { ErroApp } from "../erros.js";
+import { validarEntrada } from "../validacao.js";
 import { exigirAdmin, exigirSessao } from "./auth.js";
 import { randomUUID } from "node:crypto";
 
@@ -78,6 +78,7 @@ export async function registrarRotasCatalogo(app: FastifyInstance) {
         codigo: cupom.codigo,
         tipoDesconto: cupom.tipo_desconto,
         porcentagemDesconto: Number(cupom.porcentagem_desconto ?? 0),
+        desconto: Number(cupom.desconto_centavos ?? 0) / 100,
         valorMinimo: Number(cupom.valor_minimo_centavos ?? 0) / 100,
       })),
     ),
@@ -110,7 +111,7 @@ export async function registrarRotasCatalogo(app: FastifyInstance) {
     const usuario = await exigirSessao(req);
     // O schema garante a UF com 2 letras, o que a validação manual fazia com
     // `endereco.estado?.length !== 2` e podia estourar em runtime.
-    const entrada = enderecoInput.parse(req.body);
+    const entrada = validarEntrada(enderecoInput, req.body);
 
     await atualizarEnderecoUsuario(
       usuario.id,
@@ -137,23 +138,13 @@ export async function registrarRotasCatalogo(app: FastifyInstance) {
 
   app.post("/api/avaliacoes/:id", async (req, reply) => {
     const usuario = await exigirSessao(req);
-    const entrada = avaliacaoInput.parse(req.body);
+    const entrada = validarEntrada(avaliacaoInput, req.body);
     const produtoId = (req.params as { id: string }).id;
 
     // Mesma razão do favorito: `avaliacoes.produto_id` é chave estrangeira.
     await exigirProdutoExistente(produtoId);
 
-    // Avaliação é uma janela que abre a cada compra e fecha ao avaliar.
-    // A checagem mora aqui e não na interface porque a interface é só a
-    // casca: qualquer um pode chamar a rota direto pelo `fetch`, e sem esta
-    // linha a mesma pessoa avaliaria o mesmo produto quantas vezes quisesse.
-    if (!(await podeAvaliarProduto(usuario.id, produtoId))) {
-      throw ErroApp.semPermissao(
-        "Você já avaliou este produto. A avaliação só fica disponível logo após uma nova compra.",
-        "avaliacao_fora_da_janela",
-      );
-    }
-
+    // Elegibilidade e gravação são protegidas pela mesma transação no banco.
     await salvarAvaliacao(usuario.id, produtoId, entrada.nota, entrada.comentario);
     reply.code(201);
     return avaliacaoCriadaResponse.parse({ mensagem: "Avaliação registrada." });
@@ -168,7 +159,7 @@ export async function registrarRotasCatalogo(app: FastifyInstance) {
 
   app.post("/api/produtos", async (req, reply) => {
     await exigirAdmin(req);
-    const entrada = produtoInput.parse(req.body);
+    const entrada = validarEntrada(produtoInput, req.body);
 
     // `categoriaId` é uma chave estrangeira: sem esta checagem, uma categoria
     // inexistente deixava o banco recusar a inserção e a rota respondia 500,
@@ -200,7 +191,7 @@ export async function registrarRotasCatalogo(app: FastifyInstance) {
 
   app.put("/api/produtos/:id", async (req) => {
     await exigirAdmin(req);
-    const entrada = produtoInput.parse(req.body);
+    const entrada = validarEntrada(produtoInput, req.body);
     const { ativo } = (req.body ?? {}) as { ativo?: unknown };
     const id = (req.params as { id: string }).id;
 

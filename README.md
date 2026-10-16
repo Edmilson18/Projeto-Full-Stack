@@ -75,7 +75,7 @@ componente.
 - **Prettier**
 - **Vitest**
 - **Husky** + **lint-staged**
-- Git hooks: `pre-commit` roda lint e formatação; `pre-push` roda typecheck e testes
+- Git hooks: `pre-commit` roda lint e formatação; `pre-push` roda `verify` completo.
 
 ## Como executar
 
@@ -90,7 +90,7 @@ componente.
 O projeto usa PostgreSQL 17, em container:
 
 ```bash
-docker compose up -d
+docker compose up -d postgres
 ```
 
 ### Criar o schema e popular
@@ -100,7 +100,13 @@ npm run db:setup
 ```
 
 Aplica as migrações de `database/migrations/`, cria o administrador e insere
-os dados de demonstração. Rodar de novo não duplica nada.
+os dados de demonstração. Rodar de novo preserva estoque, preços e edições dos produtos
+existentes; apenas fotos ausentes são preenchidas. Instale as dependências com `npm ci`
+e copie `.env.example` para `.env` antes de executar os comandos da aplicação.
+
+Esse comando sobe somente o banco. Para executar também a API pela imagem Docker,
+defina uma `ADMIN_PASSWORD` própria no `.env` e use `docker compose up --build -d api`.
+Não execute a API do Docker e `npm run dev` na mesma porta ao mesmo tempo.
 
 | Comando | O que faz |
 | --- | --- |
@@ -122,7 +128,7 @@ migrações pendentes ao subir.
 
 | Comando | O que faz |
 | --- | --- |
-| `npm run dev` | Sobe a API (3000) e o Vite (5173) juntos. |
+| `npm run dev` | Compila shared e sobe API (3000) e Vite (5173) juntos. |
 | `npm run build` | Compila `packages/shared`, o servidor e o frontend. |
 | `npm start` | Sobe o servidor já compilado (aplica as migrações antes). |
 | `npm run typecheck` | `tsc --noEmit` em todos os pacotes. |
@@ -131,9 +137,9 @@ migrações pendentes ao subir.
 | `npm run format` | Prettier em modo escrita. |
 | `npm run format:check` | Verifica a formatação sem escrever. |
 | `npm test` | Roda a suíte da API e a do frontend, uma vez. |
-| `npm run test:watch` | Modo interativo. |
+| `npm run test:watch` | Suítes API e web em modo interativo, simultaneamente. |
 | `npm run test:coverage` | Relatório de cobertura da API. |
-| `npm run verify` | `typecheck` + `lint` + `test`. Roda no `pre-push`. |
+| `npm run verify` | Tipos, lint, formatação, testes e build. Roda no `pre-push` e no CI. |
 
 `typecheck` e `test` compilam o `packages/shared` antes de delegar aos pacotes,
 porque `apps/api` e `apps/web` importam os tipos do `dist/` dele. Sem essa
@@ -146,9 +152,8 @@ com o motivo de cada uma.
 
 Duas obrigatórias em produção:
 
-- **`NODE_ENV`** precisa ser definido. Sem ele o servidor assume `development`, o
-  que expõe o token de redefinição de senha na resposta de
-  `/api/recuperar-senha`. O servidor avisa no console quando falta.
+- **`NODE_ENV`** precisa ser definido como `production` na publicação para ativar
+  os controles de produção, inclusive o cookie `Secure`. O servidor avisa no console quando falta.
 - **`ADMIN_PASSWORD`** é obrigatória em produção: é a senha do administrador
   criado por `db:setup`/`db:seed`. Em desenvolvimento o padrão é `admin123`.
 
@@ -156,12 +161,18 @@ Não há `COOKIE_SECRET`: a sessão não assina cookie. O valor é um token alea
 de 32 bytes, e a validação é feita contra o SHA-256 guardado no banco. Uma
 chave de assinatura não fecharia nenhuma brecha além disso.
 
+A recuperação está desabilitada por padrão e responde 503 com a indisponibilidade
+do envio de e-mail. Para exercitar a redefinição **somente no ambiente local**, defina
+`NODE_ENV=development` e `ALLOW_LOCAL_PASSWORD_RESET=true`: nesse modo o token volta
+na resposta e a interface abre a definição da nova senha. A opção não habilita envio
+de e-mail e não funciona em produção, teste ou quando `NODE_ENV` está ausente.
+
 ### Instalação
 
 ```bash
 git clone <URL-DO-SEU-REPOSITORIO>
 cd "Projeto - FullStack"
-npm install
+npm ci
 npm run db:setup
 npm run dev
 ```
@@ -253,8 +264,8 @@ Os scripts rodam da raiz e delegam para o pacote correspondente.
 | --- | --- |
 | `npm run dev` | Sobe api (3000) e web (5173) juntos |
 | `npm run build` | Compila shared, api e web |
-| `npm test` | Suíte do `@loja/api` (94 testes) e do `@loja/web` (5 testes) |
-| `npm run verify` | typecheck em todos os pacotes, lint e testes |
+| `npm test` | Suítes de integração da API e de componentes/hooks do frontend |
+| `npm run verify` | Tipos, lint, formatação, testes e build |
 | `npm run typecheck -w @loja/web` | Só o typecheck do frontend |
 | `npm run test -w @loja/api` | Só a suíte da API |
 
@@ -271,9 +282,12 @@ O projeto usa **npm workspaces**. O `package.json` declara `"packageManager": "n
 A decisão original previa pnpm workspaces com Turborepo; só a estrutura de
 três pacotes foi mantida. Ver a [ADR 003](docs/adr/003-monorepo-pnpm-turborepo.md).
 
-Dívida conhecida: o npm não tem store content-addressable, então `typescript`,
-`vitest` e `jsdom` estão duplicados em versões diferentes entre a raiz e os
-workspaces. É a causa raiz de parte dos "funciona num pacote e falha no outro".
+As versões declaradas de TypeScript, Vitest, jsdom e jest-dom estão alinhadas
+entre raiz e workspaces. O lockfile deve acompanhar qualquer alteração de manifesto;
+`npm ci` reproduz a instalação e `npm ls --depth=0` verifica sua coerência.
+
+O workflow `.github/workflows/verify.yml` executa a verificação com PostgreSQL 17
+em um serviço isolado. A execução no GitHub acontece quando o código é enviado ao repositório.
 
 ## API
 
@@ -285,7 +299,7 @@ workspaces. É a causa raiz de parte dos "funciona num pacote e falha no outro".
 | `POST` | `/api/login` | Autentica e cria a sessão. |
 | `POST` | `/api/logout` | Encerra a sessão. |
 | `GET` | `/api/sessao` | Retorna o usuário autenticado, ou `usuario: null`. |
-| `POST` | `/api/recuperar-senha` | Envia/expõe o token de redefinição. |
+| `POST` | `/api/recuperar-senha` | Retorna indisponibilidade; token somente no modo local explícito. |
 | `POST` | `/api/redefinir-senha` | Troca a senha pelo token. |
 
 ### Catálogo e conta
@@ -323,6 +337,40 @@ resultado está no corpo, discriminado por `valido`:
 | --- | --- | --- |
 | `POST` | `/api/pedidos` | Cria um pedido a partir do carrinho. |
 
+O checkout web envia `chaveIdempotencia` (UUID) por tentativa de compra. Reenviar
+os mesmos itens, pagamento e cupom com a mesma chave e conta devolve o resumo
+original, sem criar outro pedido ou debitar novamente estoque/cupom. Alterar a
+compra mantendo a chave responde 409. Sem chave, cada requisição é uma compra
+distinta; clientes externos devem gerar e reutilizar uma chave nos seus retries.
+A migração 003 adiciona o registro dessas tentativas sem alterar pedidos existentes.
+
+O ciclo demonstrativo começa em `processando`. As transições permitidas são
+`processando → enviado → finalizado`, `processando → cancelado` e
+`cancelado → processando`. Reativar exige produto ativo e estoque suficiente;
+repetir o estado atual não movimenta estoque nem duplica auditoria. Pedidos enviados
+não podem ser cancelados por essa rota: devoluções e estornos ainda não foram implementados.
+
+Enviar exige endereço brasileiro completo e UF válida. O endereço completo salvo
+na compra é preservado; se estava incompleto, o envio captura o endereço válido do
+perfil e o mantém no pedido. Alterar o perfil depois não altera esse registro.
+O checkout ainda pode criar a compra sem endereço no modo demonstrativo, e o pagamento
+continua sendo uma aprovação simulada, sem cobrança nem estorno reais.
+
+A avaliação fica disponível após uma compra não cancelada e fecha depois do envio.
+Uma nova compra permite atualizar a nota existente. A permissão e a gravação são
+atômicas: duas tentativas simultâneas não consomem a mesma janela duas vezes.
+
+As migrações são serializadas por banco e schema entre instâncias. Transações de
+negócio repetem até três tentativas somente para deadlock (`40P01`) e falha de
+serialização (`40001`), após rollback. Erros de negócio e falhas de conexão não são
+repetidos automaticamente. Os callbacks transacionais devem conter apenas operações
+no banco; entregas externas futuras exigirão um mecanismo próprio.
+
+Na validação, entrada inválida responde 400; violação do contrato de saída é falha
+interna, responde 500 e registra detalhes somente no log do servidor. A listagem de
+cupons inclui `desconto` em reais para cupons de valor fixo; a validação mantém os
+campos explicitamente nomeados em centavos.
+
 ### Localização
 
 | Método | Rota | Descrição |
@@ -355,7 +403,10 @@ do banco: nenhum valor monetário vindo do frontend é usado no cálculo.
 - Senhas são armazenadas com hash `scrypt` e comparação segura.
 - A autorização no backend é feita por sessão identificada em cookie `HttpOnly`; dados no `localStorage` são usados somente para personalizar a interface, não para autorizar ações.
 - A sessão é mantida no banco de dados PostgreSQL, permitindo múltiplas instâncias.
-- O token de redefinição de senha só é incluído na resposta quando `NODE_ENV` **não** é `production`. O valor precisa ser definido explicitamente; o servidor avisa no console quando falta.
+- A redefinição de senha consome o token atomicamente e revoga as sessões anteriores.
+- `X-Forwarded-For` só é considerado quando `TRUSTED_PROXIES` lista proxies controlados pela implantação.
+- Com `DATABASE_SSL=true`, o certificado do banco é verificado e a URL recebe `sslmode=verify-full`.
+- O token de redefinição só é retornado com `NODE_ENV=development` e `ALLOW_LOCAL_PASSWORD_RESET=true`. Ele não é registrado nos logs. Links com `resetToken` abrem a redefinição e o parâmetro é removido do endereço sem apagar os demais parâmetros ou fragmentos.
 - O cookie recebe `Secure` automaticamente quando `NODE_ENV=production`.
 - A sessão não assina cookie e não usa `COOKIE_SECRET`: o token é aleatório de 32 bytes e a checagem é contra o SHA-256 no banco. Assinar acrescentaria uma chave a proteger sem fechar brecha adicional.
 - Pagamento e frete são simulados. **E-mail e upload de imagens não existem**: `MAILTRAP_API_KEY` e `MAIL_FROM` estão no `.env.example`, mas nenhum módulo as lê.
@@ -366,24 +417,22 @@ do banco: nenhum valor monetário vindo do frontend é usado no cálculo.
 
 - **Não há painel administrativo.** As rotas de admin existem na API e são
   testadas; a interface web que as usava foi removida e não foi reconstruída.
-  `App.tsx` ainda redireciona para `/admin.html`, que responde 404.
+  Administradores entram na mesma interface da loja, sem redirecionamento para página inexistente.
 - **Não há interface de cupom.** O hook `useCoupon` existe, valida corretamente
   o `valido: false`, mas nenhum componente o importa. O `App.tsx` envia
   `cupom: "Nenhum"` fixo.
 - **Só Pix no checkout.** O contrato aceita `pix`, `cartao` e `boleto`, e o
   frontend envia `pix` sempre.
-- `npm run dev` não recarrega a interface web ao mudar um arquivo em
-  `apps/api`; é preciso reiniciar.
+- Alterações no contrato shared durante `dev` exigem recompilar esse pacote.
+  A API usa `tsx watch` e o frontend usa o recarregamento do Vite para seus próprios fontes.
 
 ## Próximos passos
 
-- Reconstruir a interface administrativa, ou remover os redirecionamentos para
-  `/admin.html` do `App.tsx`.
+- Construir a interface administrativa.
 - Ligar a interface de cupom ao `useCoupon` que já existe.
 - Criar upload de imagens e envio de e-mail (hoje só há as variáveis reservadas).
-- Configurar CI e o primeiro deploy.
-- Unificar as versões de `typescript` e `vitest`, hoje duplicadas entre a raiz e
-  os workspaces.
+- Validar o workflow no GitHub e configurar o primeiro deploy.
+- Completar acessibilidade dos diálogos e revisar os contratos e transações restantes da auditoria.
 
 ## Contribuições
 

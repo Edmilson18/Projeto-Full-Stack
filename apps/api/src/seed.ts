@@ -6,9 +6,20 @@ import { fecharPool } from "./postgres.js";
 /**
  * Popula o banco com dados de demonstração.
  *
- * Idempotente: cada inserção verifica se o registro já existe, então rodar
- * duas vezes não duplica nada. Os valores monetários já são passados em
- * centavos, porque é assim que ficam no banco.
+ * Registros existentes preservam estoque e edições administrativas. Fotos
+ * ausentes podem ser preenchidas, mas o seed não restaura uma loja já usada.
+ * Os valores monetários já são passados em centavos.
+ *
+ * Fotos dos produtos.
+ *
+ * Ficam em `apps/web/public/imagens/` e são referenciadas por caminho local, e
+ * não por URL de fora: a foto é parte do projeto, não depende de serviço de
+ * terceiros que pode cair ou bloquear por excesso de requisição.
+ *
+ * O nome de cada produto descreve a foto que ele carrega. Isso importa porque
+ * as fotos disponíveis não batem com o nome de marketing: o fone é com fio, o
+ * monitor é de 19 polegadas. Em vez de mostrar um produto e fotografar outro,
+ * o nome diz o que a foto mostra.
  */
 const PRODUTOS = [
   {
@@ -18,46 +29,52 @@ const PRODUTOS = [
     preco: 59_990,
     quantidade: 15,
     categoria: "cat-informatica",
+    imagem: "/imagens/teclado.jpg",
   },
   {
     id: "prod-mouse",
-    nome: "Mouse Gamer HyperX Pulsefire",
-    descricao: "Mouse ergonômico com sensor preciso, ajuste de DPI e superfície antiderrapante.",
+    nome: "Mouse Gamer Razer Naga",
+    descricao: "Mouse gamer com doze botões laterais, sensor de 8200 DPI e iluminação verde.",
     preco: 36_990,
     quantidade: 25,
     categoria: "cat-informatica",
+    imagem: "/imagens/mouse.jpg",
   },
   {
     id: "prod-monitor",
-    nome: "Monitor Gamer 27'' 165Hz",
-    descricao: "Display Full HD com taxa de atualização de 165 Hz, painel IPS e baixo tempo de resposta.",
+    nome: "Monitor LCD 19''",
+    descricao: "Display LCD com painel de 19 polegadas, base ajustável e conexões VGA e DVI.",
     preco: 189_900,
     quantidade: 10,
     categoria: "cat-eletronicos",
+    imagem: "/imagens/monitor.jpg",
   },
   {
     id: "prod-cadeira",
-    nome: "Cadeira Ergonômica Flexform",
-    descricao: "Cadeira de escritório com apoio lombar, ajuste de altura e design moderno para uso diário.",
+    nome: "Cadeira Ergonômica de Escritório",
+    descricao: "Cadeira de escritório com encosto em tela respirável, ajuste de altura e apoio de braços.",
     preco: 149_900,
     quantidade: 8,
     categoria: "cat-moveis",
+    imagem: "/imagens/cadeira.jpg",
   },
   {
     id: "prod-headset",
-    nome: "Headset Wireless Studio",
-    descricao: "Fone com cancelamento de ruído, bateria de longa duração e som equilibrado para trabalho e lazer.",
+    nome: "Headset Studio",
+    descricao: "Fone over-ear com som de referência, almofadas em veludo e cabo destacável.",
     preco: 89_900,
     quantidade: 12,
     categoria: "cat-eletronicos",
+    imagem: "/imagens/headset.jpg",
   },
   {
     id: "prod-cam",
-    nome: "Câmera de Segurança 4K",
-    descricao: "Sistema de monitoramento com resolução 4K, visão noturna e armazenamento em nuvem.",
+    nome: "Câmera de Segurança Wansview",
+    descricao: "Câmera de segurança com resolução Full HD, visão noturna e aplicativo para celular.",
     preco: 129_990,
     quantidade: 6,
     categoria: "cat-eletronicos",
+    imagem: "/imagens/camera.jpg",
   },
 ];
 
@@ -161,12 +178,25 @@ const PEDIDOS_DEMONSTRACAO = [
   },
 ] as const;
 
-async function inserirProdutoSeFaltar(client: PoolClient, produto: (typeof PRODUTOS)[number]) {
-  const existe = await client.query("SELECT 1 FROM produtos WHERE id = $1", [produto.id]);
-  if (existe.rowCount) return;
+/**
+ * Insere o produto de demonstração ou preenche apenas uma foto ausente.
+ * Estoque, preços, status e outras edições existentes pertencem à loja.
+ */
+async function garantirProduto(client: PoolClient, produto: (typeof PRODUTOS)[number]) {
   await client.query(
-    "INSERT INTO produtos (id, nome, descricao, preco_centavos, quantidade, categoria_id) VALUES ($1, $2, $3, $4, $5, $6)",
-    [produto.id, produto.nome, produto.descricao, produto.preco, produto.quantidade, produto.categoria],
+    `INSERT INTO produtos (id, nome, descricao, preco_centavos, quantidade, categoria_id, imagem)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
+     ON CONFLICT (id) DO UPDATE SET
+       imagem = COALESCE(NULLIF(produtos.imagem, ''), EXCLUDED.imagem)`,
+    [
+      produto.id,
+      produto.nome,
+      produto.descricao,
+      produto.preco,
+      produto.quantidade,
+      produto.categoria,
+      produto.imagem ?? null,
+    ],
   );
 }
 
@@ -195,7 +225,7 @@ export async function semear(): Promise<{ produtos: number; cupons: number; pedi
   await emTransacao(async (client) => {
     for (const produto of PRODUTOS) {
       const antes = await client.query("SELECT 1 FROM produtos WHERE id = $1", [produto.id]);
-      await inserirProdutoSeFaltar(client, produto);
+      await garantirProduto(client, produto);
       if (!antes.rowCount) resultado.produtos++;
     }
 
@@ -252,6 +282,6 @@ if (executadoDiretamente) {
       ? `Seed concluído — produtos: ${semeado.produtos}, cupons: ${semeado.cupons}, pedidos: ${semeado.pedidos} (novos)`
       : "Seed concluído — nenhum registro novo (todos já existiam)",
   );
-  console.log("Admin: admin@lojaficticia.com / admin123");
+  console.log("Administrador: admin@lojaficticia.com (senha definida pelo ambiente na primeira criação).");
   await fecharPool();
 }

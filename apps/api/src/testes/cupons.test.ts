@@ -190,6 +190,16 @@ describe("cupons · validação", () => {
     expect(codigos).toContain("TSTVAL10");
     expect(codigos).not.toContain("TSTINATIVO");
     expect(codigos).not.toContain("TSTEXPIRADO");
+    expect(codigos).not.toContain("TSTESGOTADO");
+  });
+
+  it("expõe o valor do desconto fixo em reais na listagem", async () => {
+    await criarCupomDeTeste({ codigo: "TSTLISTAFIXO", tipo: "valor_fixo", valorFixo: 1250 });
+    const resposta = await novo().get("/api/cupons");
+    expect(resposta.status).toBe(200);
+    expect(resposta.corpo).toContainEqual(
+      expect.objectContaining({ codigo: "TSTLISTAFIXO", tipoDesconto: "valor_fixo", desconto: 12.5 }),
+    );
   });
 });
 

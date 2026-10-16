@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import { createHash, randomUUID } from "node:crypto";
 import {
   desfavoritarProduto,
   favoritarProduto,
@@ -20,11 +21,16 @@ import {
   listarProdutos,
   redefinirSenhaComToken,
   criarTokenRedefinicaoSenha,
+  criarSessao,
+  obterSessao,
+  listarDashboard,
   salvarAvaliacao,
   validarCupomCodigo,
   verificarSenha,
 } from "../database.js";
 import { obterPool } from "../postgres.js";
+import { semear } from "../seed.js";
+import { bancoLocal, conexaoPostgres } from "../seguranca.js";
 
 /** Cria um cliente novo e devolve o id. */
 async function novoCliente(nome = "Ana Souza"): Promise<string> {
@@ -131,6 +137,11 @@ describe("cupons", () => {
     expect(codigos).not.toContain("BEMVINDO10");
     expect(codigos).toContain("FRETEGRATIS");
   });
+
+  it("não anuncia cupom que atingiu o limite de uso", async () => {
+    await obterPool().query("UPDATE cupons SET limite_uso = 1, usos = 1 WHERE codigo = 'BEMVINDO10'");
+    expect((await listarCuponsAtivos()).map((cupom) => cupom.codigo)).not.toContain("BEMVINDO10");
+  });
 });
 
 /**
@@ -176,6 +187,39 @@ async function criarProdutoDeTeste(produto: {
 describe("criação de pedido", () => {
   beforeEach(async () => {
     await reporEstado();
+  });
+
+  it("recusa produto inativo sem alterar estoque nem criar pedido", async () => {
+    const usuario = await novoCliente();
+    await criarProdutoDeTeste({
+      id: "prod-inativo-compra",
+      nome: "Inativo",
+      descricao: "Teste",
+      preco: 10,
+      quantidade: 2,
+    });
+    await inativarProduto("prod-inativo-compra");
+    await expect(criarPedido(usuario, [{ produtoId: "prod-inativo-compra", quantidade: 1 }])).rejects.toThrow(
+      /inválid/i,
+    );
+    expect(await estoque("prod-inativo-compra")).toBe(2);
+    expect(await listarPedidosDoUsuario(usuario)).toHaveLength(0);
+  });
+
+  it("recusa total fora da faixa do banco e desfaz os débitos de estoque", async () => {
+    const usuario = await novoCliente();
+    await criarProdutoDeTeste({
+      id: "prod-valor-alto",
+      nome: "Valor alto",
+      descricao: "Teste",
+      preco: 100_000,
+      quantidade: 999,
+    });
+    await expect(criarPedido(usuario, [{ produtoId: "prod-valor-alto", quantidade: 999 }])).rejects.toThrow(
+      /limite permitido/i,
+    );
+    expect(await estoque("prod-valor-alto")).toBe(999);
+    expect(await listarPedidosDoUsuario(usuario)).toHaveLength(0);
   });
 
   it("calcula subtotal e total, e debita o estoque", async () => {
@@ -466,7 +510,10 @@ describe("favoritos e avaliações", () => {
       quantidade: 10,
     });
 
+    await criarPedido(usuario, [{ produtoId: "prod-avaliado", quantidade: 1 }]);
     await salvarAvaliacao(usuario, "prod-avaliado", 3, "Comentário inicial");
+    await expect(salvarAvaliacao(usuario, "prod-avaliado", 1, "Duplicada")).rejects.toMatchObject({ status: 403 });
+    await criarPedido(usuario, [{ produtoId: "prod-avaliado", quantidade: 1 }]);
     await salvarAvaliacao(usuario, "prod-avaliado", 5, "Reavaliado");
 
     const avaliacoes = await listarAvaliacoes("prod-avaliado");
@@ -474,9 +521,62 @@ describe("favoritos e avaliações", () => {
     expect(avaliacoes[0]?.nota).toBe(5);
     expect(avaliacoes[0]?.comentario).toBe("Reavaliado");
   });
+
+  it("cancelamento confirmado enquanto a avaliação espera impede a gravação", async () => {
+    const pedido = await criarPedido(usuario, [{ produtoId: "prod-mouse", quantidade: 1 }]);
+    const client = await obterPool().connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("SELECT id FROM pedidos WHERE id = $1 FOR UPDATE", [pedido.id]);
+      const avaliacao = salvarAvaliacao(usuario, "prod-mouse", 2, "Cancelado");
+      const rejeicao = expect(avaliacao).rejects.toMatchObject({ status: 403 });
+      await client.query("UPDATE pedidos SET status = 'cancelado' WHERE id = $1", [pedido.id]);
+      await client.query("COMMIT");
+      await rejeicao;
+      expect((await obterPool().query("SELECT id FROM avaliacoes WHERE usuario_id = $1", [usuario])).rows).toHaveLength(
+        0,
+      );
+    } finally {
+      await client.query("ROLLBACK");
+      client.release();
+    }
+  });
 });
 
 describe("endereço e status de pedido", () => {
+  it("não reativa pedido sem estoque e não devolve unidades fictícias", async () => {
+    const usuario = await novoCliente();
+    const produtoId = "prod-ultima-unidade";
+    await criarProdutoDeTeste({ id: produtoId, nome: "Última unidade", descricao: "Teste", preco: 10, quantidade: 1 });
+    const primeiro = await criarPedido(usuario, [{ produtoId, quantidade: 1 }]);
+    await atualizarStatusPedido(primeiro.id, "cancelado");
+    await criarPedido(usuario, [{ produtoId, quantidade: 1 }]);
+
+    await expect(atualizarStatusPedido(primeiro.id, "processando")).rejects.toThrow(/estoque insuficiente/i);
+    expect((await listarPedidosDoUsuario(usuario)).find((pedido) => pedido.id === primeiro.id)?.status).toBe(
+      "cancelado",
+    );
+    expect(await estoque(produtoId)).toBe(0);
+    await atualizarStatusPedido(primeiro.id, "cancelado");
+    expect(await estoque(produtoId)).toBe(0);
+    const auditoria = await obterPool().query(
+      "SELECT 1 FROM auditoria WHERE entidade_id = $1 AND depois->>'status' = 'processando' AND acao = 'status_alterado'",
+      [primeiro.id],
+    );
+    expect(auditoria.rows).toHaveLength(0);
+  });
+
+  it("reativa com estoque suficiente e reserva as unidades novamente", async () => {
+    const usuario = await novoCliente();
+    const produtoId = "prod-reativavel";
+    await criarProdutoDeTeste({ id: produtoId, nome: "Reativável", descricao: "Teste", preco: 10, quantidade: 2 });
+    const pedido = await criarPedido(usuario, [{ produtoId, quantidade: 2 }]);
+    await atualizarStatusPedido(pedido.id, "cancelado");
+    expect(await estoque(produtoId)).toBe(2);
+    await atualizarStatusPedido(pedido.id, "processando");
+    expect(await estoque(produtoId)).toBe(0);
+  });
+
   it("salva o endereço do usuário", async () => {
     const usuario = await novoCliente();
     await atualizarEnderecoUsuario(usuario, {
@@ -494,9 +594,87 @@ describe("endereço e status de pedido", () => {
 
   it("rejeita status de pedido desconhecido", async () => {
     const usuario = await novoCliente();
+    await atualizarEnderecoUsuario(usuario, {
+      cep: "01001000",
+      rua: "Praça da Sé",
+      numero: "1",
+      complemento: "",
+      bairro: "Sé",
+      cidade: "São Paulo",
+      estado: "SP",
+    });
     const pedido = await criarPedido(usuario, [{ produtoId: "prod-teclado", quantidade: 1 }]);
     await expect(atualizarStatusPedido(pedido.id, "inventado")).rejects.toThrow(/inválido/i);
     await expect(atualizarStatusPedido(pedido.id, "enviado")).resolves.toBeUndefined();
+  });
+
+  it("rejeita saltos e retornos sem alterar estoque ou auditoria", async () => {
+    const usuario = await novoCliente();
+    const pedido = await criarPedido(usuario, [{ produtoId: "prod-teclado", quantidade: 1 }]);
+    const saldo = await estoque("prod-teclado");
+    await expect(atualizarStatusPedido(pedido.id, "finalizado")).rejects.toMatchObject({ status: 409 });
+    await expect(atualizarStatusPedido(pedido.id, "enviado")).rejects.toThrow(/endereço/i);
+    await atualizarStatusPedido(pedido.id, "cancelado");
+    await expect(atualizarStatusPedido(pedido.id, "enviado")).rejects.toMatchObject({ status: 409 });
+    expect(await estoque("prod-teclado")).toBe(saldo + 1);
+    const historico = await obterPool().query(
+      "SELECT depois FROM auditoria WHERE entidade_id = $1 AND acao = 'status_alterado'",
+      [pedido.id],
+    );
+    expect(historico.rows).toEqual([{ depois: { status: "cancelado" } }]);
+  });
+
+  it("finalização é terminal e repetir o estado não cria auditoria", async () => {
+    const usuario = await novoCliente();
+    await atualizarEnderecoUsuario(usuario, {
+      cep: "01001000",
+      rua: "Praça da Sé",
+      numero: "1",
+      complemento: "",
+      bairro: "Sé",
+      cidade: "São Paulo",
+      estado: "SP",
+    });
+    const pedido = await criarPedido(usuario, [{ produtoId: "prod-mouse", quantidade: 1 }]);
+    await atualizarStatusPedido(pedido.id, "enviado");
+    await expect(atualizarStatusPedido(pedido.id, "cancelado")).rejects.toMatchObject({ status: 409 });
+    await atualizarStatusPedido(pedido.id, "finalizado");
+    await atualizarStatusPedido(pedido.id, "finalizado");
+    await expect(atualizarStatusPedido(pedido.id, "processando")).rejects.toMatchObject({ status: 409 });
+    const historico = await obterPool().query(
+      "SELECT id FROM auditoria WHERE entidade_id = $1 AND acao = 'status_alterado'",
+      [pedido.id],
+    );
+    expect(historico.rows).toHaveLength(2);
+  });
+
+  it.each([true, false])("congela o endereço do pedido no envio, endereço na compra=%s", async (enderecoNaCompra) => {
+    const usuario = await novoCliente();
+    const endereco = {
+      cep: "01001000",
+      rua: "Rua original",
+      numero: "1",
+      complemento: "",
+      bairro: "Sé",
+      cidade: "São Paulo",
+      estado: "SP",
+    };
+    if (enderecoNaCompra) await atualizarEnderecoUsuario(usuario, endereco);
+    const pedido = await criarPedido(usuario, [{ produtoId: "prod-mouse", quantidade: 1 }]);
+    await atualizarEnderecoUsuario(usuario, { ...endereco, rua: "Rua antes do envio" });
+    await atualizarStatusPedido(pedido.id, "enviado");
+    await atualizarEnderecoUsuario(usuario, { ...endereco, rua: "Rua depois do envio" });
+    await atualizarStatusPedido(pedido.id, "finalizado");
+    const gravado = await obterPool().query("SELECT rua_entrega FROM pedidos WHERE id = $1", [pedido.id]);
+    expect(gravado.rows[0]?.rua_entrega).toBe(enderecoNaCompra ? "Rua original" : "Rua antes do envio");
+  });
+
+  it("cancelamentos concorrentes devolvem o estoque uma única vez", async () => {
+    const usuario = await novoCliente();
+    const pedido = await criarPedido(usuario, [{ produtoId: "prod-cam", quantidade: 1 }]);
+    const saldo = await estoque("prod-cam");
+    await Promise.all([atualizarStatusPedido(pedido.id, "cancelado"), atualizarStatusPedido(pedido.id, "cancelado")]);
+    expect(await estoque("prod-cam")).toBe(saldo + 1);
   });
 
   it("devolve o estoque ao cancelar um pedido", async () => {
@@ -513,6 +691,29 @@ describe("endereço e status de pedido", () => {
 });
 
 describe("tokens de redefinição de senha", () => {
+  it("revoga as sessões existentes ao redefinir a senha", async () => {
+    const usuario = await novoCliente();
+    const sessao = "sessao-anterior-a-recuperacao";
+    const hash = createHash("sha256").update(sessao).digest("hex");
+    await criarSessao(sessao, usuario, 60_000);
+    expect(await obterSessao(hash)).toBe(usuario);
+    const token = await criarTokenRedefinicaoSenha(`${usuario}@exemplo.com`);
+    expect(await redefinirSenhaComToken(token ?? "", "novaSenha456")).toBe(true);
+    expect(await obterSessao(hash)).toBeUndefined();
+  });
+
+  it("consome o token uma só vez entre duas redefinições concorrentes", async () => {
+    const usuario = await novoCliente();
+    const token = await criarTokenRedefinicaoSenha(`${usuario}@exemplo.com`);
+    const resultados = await Promise.all([
+      redefinirSenhaComToken(token ?? "", "primeiraSenha123"),
+      redefinirSenhaComToken(token ?? "", "segundaSenha456"),
+    ]);
+    expect(resultados.filter(Boolean)).toHaveLength(1);
+    const senhaFinal = (await buscarUsuarioPorEmail(`${usuario}@exemplo.com`))?.senha ?? "";
+    expect(verificarSenha(resultados[0] ? "primeiraSenha123" : "segundaSenha456", senhaFinal)).toBe(true);
+  });
+
   it("gera um token que reseta a senha uma única vez", async () => {
     const usuario = await novoCliente();
     const token = await criarTokenRedefinicaoSenha(`${usuario}@exemplo.com`);
@@ -534,5 +735,154 @@ describe("tokens de redefinição de senha", () => {
 
   it("recusa token inválido", async () => {
     expect(await redefinirSenhaComToken("token-inventado-com-tamanho-suficiente-1234", "x")).toBe(false);
+  });
+});
+
+describe("integridade da demonstração", () => {
+  it("reexecutar seed preserva vendas e edições de produtos existentes", async () => {
+    const usuario = await novoCliente();
+    await obterPool().query(
+      "UPDATE produtos SET quantidade = 3, nome = 'Nome personalizado', preco_centavos = 1234, imagem = '/minha-foto.jpg' WHERE id = 'prod-teclado'",
+    );
+    const pedido = await criarPedido(usuario, [{ produtoId: "prod-teclado", quantidade: 1 }]);
+    await semear();
+    const produto = await obterPool().query(
+      "SELECT nome, quantidade, preco_centavos, imagem FROM produtos WHERE id = 'prod-teclado'",
+    );
+    expect(produto.rows[0]).toMatchObject({
+      nome: "Nome personalizado",
+      quantidade: 2,
+      preco_centavos: 1234,
+      imagem: "/minha-foto.jpg",
+    });
+    expect((await listarPedidosDoUsuario(usuario)).map((item) => item.id)).toContain(pedido.id);
+  });
+
+  it("calcula ticket médio com o mesmo conjunto de pedidos da receita", async () => {
+    const dashboard = await listarDashboard();
+    const esperados = await obterPool().query(
+      "SELECT COALESCE(SUM(total_centavos), 0)::numeric / NULLIF(COUNT(*), 0) / 100 AS ticket FROM pedidos WHERE status <> 'cancelado'",
+    );
+    expect(dashboard.ticketMedio).toBeCloseTo(Number(esperados.rows[0]?.ticket ?? 0), 8);
+  });
+
+  it("mantém uma única sessão mesmo com logins simultâneos", async () => {
+    const usuario = await novoCliente();
+    await Promise.all([
+      criarSessao("login-paralelo-a", usuario, 60_000),
+      criarSessao("login-paralelo-b", usuario, 60_000),
+    ]);
+    const sessoes = await obterPool().query("SELECT token_hash FROM sessoes WHERE usuario_id = $1", [usuario]);
+    expect(sessoes.rows).toHaveLength(1);
+  });
+});
+
+describe("proteção do reset local", () => {
+  it.each([
+    "postgresql://usuario:senha@localhost:5433/loja",
+    "postgres://usuario:senha@127.0.0.1/loja",
+    "postgresql://usuario:senha@[::1]/loja",
+  ])("aceita host local: %s", (url) => {
+    expect(bancoLocal(url)).toBe(true);
+  });
+
+  it.each([
+    "postgresql://usuario:localhost@banco.example/loja",
+    "postgresql://localhost:senha@banco.example/loja",
+    "postgresql://usuario:senha@banco.example/localhost",
+    "postgresql://usuario:senha@localhost.example/loja",
+    "postgresql://usuario:senha@banco.example/loja?host=127.0.0.1",
+    "postgresql://usuario:senha@localhost/loja?host=banco.example",
+    "postgresql://usuario:senha@localhost/loja?hostaddr=203.0.113.1",
+    "https://localhost/loja",
+    "localhost",
+  ])("recusa um alvo que não é PostgreSQL local: %s", (url) => {
+    expect(bancoLocal(url)).toBe(false);
+  });
+});
+
+describe("TLS do PostgreSQL", () => {
+  it.each(["no-verify", "disable", "prefer", "require"])("não permite sslmode=%s rebaixar TLS habilitado", (modo) => {
+    const opcoes = conexaoPostgres(`postgresql://usuario:senha@banco.example/loja?sslmode=${modo}`, true);
+    expect(new URL(opcoes.connectionString).searchParams.get("sslmode")).toBe("verify-full");
+    expect(opcoes.ssl?.rejectUnauthorized).toBe(true);
+  });
+});
+
+async function prepararCompra(id: string, quantidade = 3) {
+  const usuario = await novoCliente();
+  await criarProdutoDeTeste({ id, nome: "Produto de compra repetida", descricao: "Teste", preco: 200, quantidade });
+  return { usuario, itens: [{ produtoId: id, quantidade: 1 }], chave: randomUUID() };
+}
+
+describe("idempotência da compra", () => {
+  it("duas tentativas simultâneas criam um pedido e debitam estoque e cupom uma vez", async () => {
+    const { usuario, itens, chave } = await prepararCompra("prod-idempotente");
+    await zerarCupons();
+    const [primeiro, segundo] = await Promise.all([
+      criarPedido(usuario, itens, "BEMVINDO10", "pix", chave),
+      criarPedido(usuario, itens, "BEMVINDO10", "pix", chave),
+    ]);
+    expect(segundo).toEqual(primeiro);
+    expect(await estoque("prod-idempotente")).toBe(2);
+    expect(await listarPedidosDoUsuario(usuario)).toHaveLength(1);
+    const cupom = await obterPool().query("SELECT usos FROM cupons WHERE codigo = 'BEMVINDO10'");
+    expect(cupom.rows[0]?.usos).toBe(1);
+    const auditoria = await obterPool().query("SELECT id FROM auditoria WHERE entidade_id = $1 AND acao = 'criado'", [
+      primeiro.id,
+    ]);
+    expect(auditoria.rows).toHaveLength(1);
+  });
+
+  it("recusa reutilizar a chave para uma compra diferente", async () => {
+    const { usuario, itens, chave } = await prepararCompra("prod-chave-conflito");
+    await criarPedido(usuario, itens, undefined, "pix", chave);
+    await expect(
+      criarPedido(usuario, [{ produtoId: "prod-chave-conflito", quantidade: 2 }], undefined, "pix", chave),
+    ).rejects.toThrow(/outros itens ou condições/i);
+    expect(await estoque("prod-chave-conflito")).toBe(2);
+    expect(await listarPedidosDoUsuario(usuario)).toHaveLength(1);
+  });
+
+  it("isola a chave por usuário", async () => {
+    const { usuario, itens, chave } = await prepararCompra("prod-chave-por-conta");
+    const outroUsuario = await novoCliente();
+    const primeiro = await criarPedido(usuario, itens, undefined, "pix", chave);
+    const segundo = await criarPedido(outroUsuario, itens, undefined, "pix", chave);
+    expect(primeiro.id).not.toBe(segundo.id);
+    expect(await estoque("prod-chave-por-conta")).toBe(1);
+  });
+
+  it("permite repetir a tentativa depois de uma transação recusada", async () => {
+    const { usuario, itens, chave } = await prepararCompra("prod-chave-rollback", 0);
+    await expect(criarPedido(usuario, itens, undefined, "pix", chave)).rejects.toThrow(/estoque/i);
+    await obterPool().query("UPDATE produtos SET quantidade = 1 WHERE id = 'prod-chave-rollback'");
+    const criado = await criarPedido(usuario, itens, undefined, "pix", chave);
+    expect((await criarPedido(usuario, itens, undefined, "pix", chave)).id).toBe(criado.id);
+    expect(await estoque("prod-chave-rollback")).toBe(0);
+  });
+
+  it("reconhece os mesmos itens enviados em outra ordem", async () => {
+    const { usuario, itens, chave } = await prepararCompra("prod-ordem-a");
+    await criarProdutoDeTeste({
+      id: "prod-ordem-b",
+      nome: "Outro produto",
+      descricao: "Teste",
+      preco: 10,
+      quantidade: 3,
+    });
+    const compra = [...itens, { produtoId: "prod-ordem-b", quantidade: 1 }];
+    const primeiro = await criarPedido(usuario, compra, undefined, "pix", chave);
+    expect(await criarPedido(usuario, compra.toReversed(), undefined, "pix", chave)).toEqual(primeiro);
+    expect(await estoque("prod-ordem-a")).toBe(2);
+    expect(await estoque("prod-ordem-b")).toBe(2);
+  });
+
+  it("chaves diferentes representam compras distintas", async () => {
+    const { usuario, itens, chave } = await prepararCompra("prod-compras-distintas");
+    const primeiro = await criarPedido(usuario, itens, undefined, "pix", chave);
+    const segundo = await criarPedido(usuario, itens, undefined, "pix", randomUUID());
+    expect(segundo.id).not.toBe(primeiro.id);
+    expect(await estoque("prod-compras-distintas")).toBe(1);
   });
 });

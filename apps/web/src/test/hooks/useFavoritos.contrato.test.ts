@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { useFavoritos } from "../../hooks/useFavoritos.js";
+import { respostaPendente } from "../ajuda.js";
 
 const get = vi.fn();
 const post = vi.fn();
@@ -102,5 +103,85 @@ describe("useFavoritos — contrato com o servidor", () => {
     for (const chamada of put.mock.calls) {
       expect(chamada).toEqual(["/favoritos/prod-mouse", {}]);
     }
+  });
+
+  it("falha de um produto preserva o favorito confirmado de outro", async () => {
+    const a = respostaPendente<unknown>();
+    put.mockReturnValueOnce(a.promise).mockResolvedValue({ favorito: true });
+    const { result } = renderHook(() => useFavoritos({ usuarioLogado: true }));
+    let primeira!: Promise<void>;
+    act(() => {
+      primeira = result.current.alternarFavorito("a");
+    });
+    await act(async () => {
+      await result.current.alternarFavorito("b");
+    });
+    await act(async () => {
+      a.rejeitar(new Error("Falha em A"));
+      await primeira;
+    });
+    expect(result.current.favoritos).toEqual(["b"]);
+  });
+
+  it("serializa marcar e desmarcar o mesmo produto", async () => {
+    const a = respostaPendente<unknown>();
+    put.mockReturnValueOnce(a.promise);
+    const { result } = renderHook(() => useFavoritos({ usuarioLogado: true }));
+    let primeira!: Promise<void>;
+    let segunda!: Promise<void>;
+    await act(async () => {
+      primeira = result.current.alternarFavorito("a");
+    });
+    act(() => {
+      segunda = result.current.alternarFavorito("a");
+    });
+    expect(del).not.toHaveBeenCalled();
+    await act(async () => {
+      a.resolver({ favorito: true });
+      await Promise.all([primeira, segunda]);
+    });
+    expect(del).toHaveBeenCalledWith("/favoritos/a");
+    expect(result.current.favoritos).toEqual([]);
+  });
+
+  it("duas falhas no mesmo produto restauram o estado confirmado", async () => {
+    const a = respostaPendente<unknown>();
+    put.mockReturnValueOnce(a.promise);
+    del.mockRejectedValue(new Error("Falha ao remover"));
+    const { result } = renderHook(() => useFavoritos({ usuarioLogado: true }));
+    let primeira!: Promise<void>;
+    let segunda!: Promise<void>;
+    await act(async () => {
+      primeira = result.current.alternarFavorito("a");
+    });
+    act(() => {
+      segunda = result.current.alternarFavorito("a");
+    });
+    await act(async () => {
+      a.rejeitar(new Error("Falha ao marcar"));
+      await Promise.all([primeira, segunda]);
+    });
+    expect(result.current.favoritos).toEqual([]);
+  });
+
+  it("erro de uma conta anterior não altera os favoritos da conta nova", async () => {
+    const a = respostaPendente<unknown>();
+    put.mockReturnValueOnce(a.promise);
+    const onErro = vi.fn();
+    const { result, rerender } = renderHook(({ id }) => useFavoritos({ usuarioLogado: true, usuarioId: id, onErro }), {
+      initialProps: { id: "a" },
+    });
+    let primeira!: Promise<void>;
+    await act(async () => {
+      primeira = result.current.alternarFavorito("produto-a");
+    });
+    rerender({ id: "b" });
+    act(() => result.current.setFavoritos(["produto-b"]));
+    await act(async () => {
+      a.rejeitar(new Error("Erro da conta A"));
+      await primeira;
+    });
+    expect(result.current.favoritos).toEqual(["produto-b"]);
+    expect(onErro).not.toHaveBeenCalled();
   });
 });

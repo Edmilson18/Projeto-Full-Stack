@@ -13,6 +13,10 @@ carregarEnv({ path: path.join(raizProjeto, ".env") });
 
 export const ambiente = {
   producao: process.env.NODE_ENV === "production",
+  proxiesConfiaveis: (process.env.TRUSTED_PROXIES ?? "")
+    .split(",")
+    .map((proxy) => proxy.trim())
+    .filter(Boolean),
   porta: Number(process.env.PORT ?? 3000),
 
   /**

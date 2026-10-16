@@ -7,23 +7,13 @@ type ProductModalProps = {
   usuario: UsuarioPublico | null;
   avaliacoes: AvaliacaoResponse[];
   /**
-   * Posição do produto no catálogo cheio, usada só para escolher a foto quando
-   * o produto não tem `imagem` no banco.
-   *
-   * Sem isto o modal caía sempre no índice 0 e mostrava a mesma foto para todo
-   * produto — era o que fazia a câmera de segurança aparecer com a foto de um
-   * relógio.
-   */
-  indice?: number;
-  /**
-   * A pessoa já comprou este produto? Avaliação é restrita a quem comprou, e a
-   * interface mostra o motivo quando a resposta é não.
+   * A pessoa pode avaliar este produto agora? Avaliação é restrita a quem comprou,
+   * e a interface mostra o motivo quando a resposta é não.
    */
   podeAvaliar?: boolean;
   onFechar: () => void;
   onAdicionarAoCarrinho: (produto: ProdutoResponse) => void;
   onEnviarAvaliacao: (produtoId: string, nota: number, comentario: string) => Promise<void>;
-  onCarregarAvaliacoes: (produtoId: string) => Promise<void>;
   onMensagem: (msg: string) => void;
 };
 
@@ -31,12 +21,10 @@ export function ProductModal({
   produto,
   usuario,
   avaliacoes,
-  indice = 0,
   podeAvaliar = false,
   onFechar,
   onAdicionarAoCarrinho,
   onEnviarAvaliacao,
-  onCarregarAvaliacoes,
   onMensagem,
 }: ProductModalProps) {
   const [notaAvaliacao, setNotaAvaliacao] = useState(5);
@@ -52,7 +40,6 @@ export function ProductModal({
     try {
       await onEnviarAvaliacao(produto.id, notaAvaliacao, comentarioAvaliacao);
       setComentarioAvaliacao("");
-      await onCarregarAvaliacoes(produto.id);
     } catch (err) {
       onMensagem(err instanceof Error ? err.message : "Erro ao enviar avaliação.");
     } finally {
@@ -67,7 +54,7 @@ export function ProductModal({
           ×
         </button>
         <div className="modal-grid">
-          <img src={imagemDe(produto, indice)} alt={produto.nome} />
+          <img src={imagemDe(produto)} alt={produto.nome} />
           {/* `modal-info` é a coluna que rola; a foto ao lado fica fixa. */}
           <div className="modal-info">
             <span className="tag">{produto.categoria}</span>
@@ -108,8 +95,8 @@ export function ProductModal({
                    isto a pessoa acha que a página quebrou, e não tem como
                    entender que existe uma regra. */
                 <p className="review-locked">
-                  <strong>Avalie este produto</strong>A avaliação fica disponível logo após a compra. Você já avaliou
-                  este produto — compre de novo para atualizar sua nota.
+                  <strong>Avalie este produto</strong>A avaliação fica disponível logo após a compra. Se já deixou sua
+                  avaliação, uma nova compra permite atualizar a nota.
                 </p>
               ) : (
                 <>
@@ -141,12 +128,13 @@ export function ProductModal({
             </div>
             <button
               className="primary-btn full"
+              disabled={produto.quantidade < 1}
               onClick={() => {
                 onAdicionarAoCarrinho(produto);
                 onFechar();
               }}
             >
-              Adicionar ao carrinho
+              {produto.quantidade < 1 ? "Produto indisponível" : "Adicionar ao carrinho"}
             </button>
           </div>
         </div>

@@ -20,7 +20,7 @@ export function PaymentSummary({
   onConfirmar,
 }: PaymentSummaryProps) {
   return (
-    <div className="confirm-backdrop" onClick={onVoltar}>
+    <div className="confirm-backdrop" onClick={processando ? undefined : onVoltar}>
       <section className="payment-summary" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
         <span className="eyebrow">Resumo do pedido</span>
         <h2>Confirme sua compra</h2>
@@ -43,7 +43,7 @@ export function PaymentSummary({
           </div>
         </div>
         <div className="confirm-actions">
-          <button className="secondary-btn" type="button" onClick={onVoltar}>
+          <button className="secondary-btn" type="button" disabled={processando} onClick={onVoltar}>
             Voltar
           </button>
           <button className="primary-btn" type="button" disabled={processando} onClick={onConfirmar}>

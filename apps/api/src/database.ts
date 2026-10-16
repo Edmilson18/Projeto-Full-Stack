@@ -1,8 +1,12 @@
 import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
 import type { PoolClient } from "pg";
+import type { MetodoPagamento, PedidoCriado } from "@loja/shared";
+import { enderecoInput, statusPedido, TRANSICOES_PEDIDO } from "@loja/shared";
 import { emTransacao, obterPool } from "./postgres.js";
 import { aplicarMigracoes } from "./postgres.js";
 import { ErroApp } from "./erros.js";
+
+const MAX_CENTAVOS = 2_147_483_647;
 
 /**
  * Converte `Date` em string ISO.
@@ -70,7 +74,7 @@ export async function criarTokenRedefinicaoSenha(email: string): Promise<string 
 export async function redefinirSenhaComToken(token: string, novaSenha: string): Promise<boolean> {
   return emTransacao(async (client) => {
     const encontrado = await client.query<{ usuario_id: string }>(
-      "SELECT usuario_id FROM tokens_redefinicao_senha WHERE token_hash = $1 AND expira_em > now()",
+      "DELETE FROM tokens_redefinicao_senha WHERE token_hash = $1 AND expira_em > now() RETURNING usuario_id",
       [hashToken(token)],
     );
 
@@ -78,8 +82,8 @@ export async function redefinirSenhaComToken(token: string, novaSenha: string): 
     if (!linha) return false;
 
     await client.query("UPDATE usuarios SET senha = $1 WHERE id = $2", [criarHashSenha(novaSenha), linha.usuario_id]);
-    // Uso único: o token é consumido, mesmo que a senha volte a ser trocada.
-    await client.query("DELETE FROM tokens_redefinicao_senha WHERE token_hash = $1", [hashToken(token)]);
+    // A troca e o consumo do token são revertidos juntos se alguma escrita falhar.
+    await client.query("DELETE FROM sessoes WHERE usuario_id = $1", [linha.usuario_id]);
     return true;
   });
 }
@@ -111,6 +115,8 @@ export async function criarSessao(token: string, usuarioId: string, duracaoMs: n
   // cinco abas deixa cinco registros válidos até expirarem, e um logout só
   // derrubaria um deles.
   await emTransacao(async (client) => {
+    // Serializa logins do mesmo usuário, inclusive quando ainda não há sessão.
+    await client.query("SELECT id FROM usuarios WHERE id = $1 FOR UPDATE", [usuarioId]);
     await client.query("DELETE FROM sessoes WHERE usuario_id = $1", [usuarioId]);
     await client.query(
       "INSERT INTO sessoes (token_hash, usuario_id, expira_em) VALUES ($1, $2, now() + ($3::bigint * interval '1 millisecond'))",
@@ -216,13 +222,11 @@ export async function garantirAdministrador(): Promise<void> {
     if (!linha) {
       // Em produção, a senha do admin deve ser definida via variável de ambiente.
       // Em desenvolvimento, usa uma senha padrão para facilitar o uso local.
-      const senhaAdmin =
-        process.env.ADMIN_PASSWORD ??
-        (process.env.NODE_ENV === "production"
-          ? (() => {
-              throw new Error("ADMIN_PASSWORD é obrigatório em produção.");
-            })()
-          : "admin123");
+      const configurada = process.env.ADMIN_PASSWORD;
+      if (process.env.NODE_ENV === "production" && !configurada?.trim()) {
+        throw new Error("ADMIN_PASSWORD é obrigatório em produção e não pode ser vazio.");
+      }
+      const senhaAdmin = configurada?.trim() ? configurada : "admin123";
       await client.query("INSERT INTO usuarios (id, nome, email, senha, role) VALUES ($1, $2, $3, $4, 'admin')", [
         "usr-admin",
         "Administrador",
@@ -529,6 +533,7 @@ export async function listarCuponsAtivos() {
      WHERE ativo = true
        AND (inicio_em IS NULL OR inicio_em <= now())
        AND (fim_em IS NULL OR fim_em >= now())
+       AND (limite_uso IS NULL OR usos < limite_uso)
      ORDER BY codigo ASC`,
   );
   return resultado.rows;
@@ -581,32 +586,58 @@ export async function criarPedido(
   usuarioId: string,
   itens: Array<{ produtoId: string; quantidade: number }>,
   codigoCupom?: string,
-  pagamento = "pix",
-) {
+  pagamento: MetodoPagamento = "pix",
+  chaveIdempotencia?: string,
+): Promise<PedidoCriado> {
   // `async` de propósito: sem isso o `throw` do carrinho vazio sai de forma
   // síncrona e vira exceção em vez de rejeição, obrigando o chamador a tratar
   // os dois casos. Sendo async, todo erro é rejeição.
   if (!itens.length) throw ErroApp.badRequest("O carrinho está vazio.");
 
   const pedidoId = `PED-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}-${randomUUID().slice(0, 6).toUpperCase()}`;
+  const itensOrdenados = itens.toSorted((a, b) =>
+    a.produtoId < b.produtoId ? -1 : a.produtoId > b.produtoId ? 1 : a.quantidade - b.quantidade,
+  );
+  const requisicaoHash = hashToken(
+    JSON.stringify({ itens: itensOrdenados, cupom: codigoCupom?.trim().toUpperCase() ?? null, pagamento }),
+  );
 
   return emTransacao(async (client) => {
+    if (chaveIdempotencia) {
+      // Também serializa a primeira tentativa, antes de existir um registro.
+      await client.query("SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))", [usuarioId, chaveIdempotencia]);
+      const anterior = await client.query<{ requisicao_hash: string; resposta: PedidoCriado }>(
+        "SELECT requisicao_hash, resposta FROM pedidos_idempotencia WHERE usuario_id = $1 AND chave = $2",
+        [usuarioId, chaveIdempotencia],
+      );
+      if (anterior.rows[0]) {
+        if (anterior.rows[0].requisicao_hash !== requisicaoHash) {
+          throw ErroApp.conflito("Esta tentativa de compra já foi usada com outros itens ou condições.");
+        }
+        return anterior.rows[0].resposta;
+      }
+    }
+
     let subtotal = 0;
     const itensCalculados: Array<{ produtoId: string; quantidade: number; preco: number }> = [];
 
-    for (const item of itens) {
-      const produto = await client.query<{ id: string; preco_centavos: number; quantidade: number }>(
-        "SELECT id, preco_centavos, quantidade FROM produtos WHERE id = $1 FOR UPDATE",
+    // Todos os carrinhos bloqueiam produtos na mesma ordem, evitando A/B contra B/A.
+    for (const item of itensOrdenados) {
+      const produto = await client.query<{ id: string; preco_centavos: number; quantidade: number; ativo: boolean }>(
+        "SELECT id, preco_centavos, quantidade, ativo FROM produtos WHERE id = $1 FOR UPDATE",
         [item.produtoId],
       );
 
       const linha = produto.rows[0];
-      if (!linha || !Number.isInteger(item.quantidade) || item.quantidade < 1) {
+      if (!linha || !linha.ativo || !Number.isInteger(item.quantidade) || item.quantidade < 1) {
         throw ErroApp.badRequest("Produto ou quantidade inválida.");
       }
       if (linha.quantidade < item.quantidade) throw ErroApp.badRequest("Um dos produtos não tem estoque suficiente.");
 
       subtotal += linha.preco_centavos * item.quantidade;
+      if (!Number.isSafeInteger(subtotal) || subtotal > MAX_CENTAVOS) {
+        throw ErroApp.badRequest("O valor do pedido ultrapassa o limite permitido.");
+      }
       itensCalculados.push({ produtoId: linha.id, quantidade: item.quantidade, preco: linha.preco_centavos });
 
       await client.query("UPDATE produtos SET quantidade = quantidade - $2 WHERE id = $1", [linha.id, item.quantidade]);
@@ -647,6 +678,9 @@ export async function criarPedido(
     }
 
     const total = subtotal - desconto + frete;
+    if (!Number.isSafeInteger(total) || total > MAX_CENTAVOS) {
+      throw ErroApp.badRequest("O valor do pedido ultrapassa o limite permitido.");
+    }
 
     await client.query(
       `INSERT INTO pedidos (id, usuario_id, subtotal_centavos, desconto_centavos, frete_centavos, total_centavos,
@@ -684,7 +718,7 @@ export async function criarPedido(
       client,
     );
 
-    return {
+    const resposta: PedidoCriado = {
       id: pedidoId,
       subtotal: subtotal / 100,
       desconto: desconto / 100,
@@ -694,6 +728,13 @@ export async function criarPedido(
       metodo_pagamento: pagamento,
       status_pagamento: "aprovado",
     };
+    if (chaveIdempotencia) {
+      await client.query(
+        "INSERT INTO pedidos_idempotencia (usuario_id, chave, requisicao_hash, pedido_id, resposta) VALUES ($1, $2, $3, $4, $5::jsonb)",
+        [usuarioId, chaveIdempotencia, requisicaoHash, pedidoId, JSON.stringify(resposta)],
+      );
+    }
+    return resposta;
   });
 }
 
@@ -759,12 +800,16 @@ export async function listarPedidosAdmin() {
  * edita o pedido de outra pessoa precisa aparecer como autor na auditoria.
  */
 export async function atualizarStatusPedido(id: string, status: string, usuarioId?: string) {
-  const permitidos = ["processando", "enviado", "finalizado", "cancelado"];
-  if (!permitidos.includes(status)) throw ErroApp.badRequest("Status de pedido inválido.");
+  const destino = statusPedido.safeParse(status);
+  if (!destino.success) throw ErroApp.badRequest("Status de pedido inválido.");
 
   await emTransacao(async (client) => {
-    const pedido = await client.query<{ status: string; usuario_id: string | null }>(
-      "SELECT status, usuario_id FROM pedidos WHERE id = $1 FOR UPDATE",
+    const pedido = await client.query<{ status: string; usuario_id: string | null; endereco: unknown }>(
+      `SELECT status, usuario_id, jsonb_build_object(
+        'cep', cep_entrega, 'rua', rua_entrega, 'numero', numero_entrega,
+        'complemento', COALESCE(complemento_entrega, ''), 'bairro', bairro_entrega,
+        'cidade', cidade_entrega, 'estado', estado_entrega
+       ) AS endereco FROM pedidos WHERE id = $1 FOR UPDATE`,
       [id],
     );
     const linha = pedido.rows[0];
@@ -772,6 +817,33 @@ export async function atualizarStatusPedido(id: string, status: string, usuarioI
     // Pedido já no estado pedido não é transição: registrar auditoria aqui
     // criaria rastro de uma alteração que não aconteceu.
     if (linha.status === status) return;
+
+    const origem = statusPedido.parse(linha.status);
+    if (!TRANSICOES_PEDIDO[origem].includes(destino.data)) {
+      throw ErroApp.conflito(`Não é possível alterar o pedido de ${origem} para ${status}.`);
+    }
+    if (status === "enviado") {
+      // A simulação pode criar pedidos antes do endereço, mas não despachá-los.
+      // Preserva o endereço completo da compra. Se estava incompleto, captura
+      // o perfil atual antes do despacho e mantém esse snapshot no pedido.
+      let endereco = enderecoInput.safeParse(linha.endereco);
+      if (!endereco.success) {
+        const perfil = await client.query(
+          "SELECT cep, rua, numero, COALESCE(complemento, '') AS complemento, bairro, cidade, estado FROM usuarios WHERE id = $1 FOR SHARE",
+          [linha.usuario_id],
+        );
+        endereco = enderecoInput.safeParse(perfil.rows[0]);
+      }
+      if (!endereco.success) {
+        throw ErroApp.conflito("Preencha um endereço de entrega válido antes de enviar o pedido.");
+      }
+      const e = endereco.data;
+      await client.query(
+        `UPDATE pedidos SET cep_entrega = $2, rua_entrega = $3, numero_entrega = $4,
+         complemento_entrega = $5, bairro_entrega = $6, cidade_entrega = $7, estado_entrega = $8 WHERE id = $1`,
+        [id, e.cep, e.rua, e.numero, e.complemento, e.bairro, e.cidade, e.estado],
+      );
+    }
 
     // Registrar `antes` com o valor lido na mesma transação é o que garante que
     // a auditoria descreve a transição real, e não o estado que a listagem
@@ -792,7 +864,7 @@ export async function atualizarStatusPedido(id: string, status: string, usuarioI
 
     if (status === "cancelado" && linha.status !== "cancelado") {
       const itens = await client.query<{ produto_id: string; quantidade: number }>(
-        "SELECT produto_id, quantidade FROM itens_pedido WHERE pedido_id = $1",
+        "SELECT produto_id, quantidade FROM itens_pedido WHERE pedido_id = $1 ORDER BY produto_id",
         [id],
       );
       for (const item of itens.rows) {
@@ -803,14 +875,17 @@ export async function atualizarStatusPedido(id: string, status: string, usuarioI
       }
     } else if (linha.status === "cancelado" && status !== "cancelado") {
       const itens = await client.query<{ produto_id: string; quantidade: number }>(
-        "SELECT produto_id, quantidade FROM itens_pedido WHERE pedido_id = $1",
+        "SELECT produto_id, quantidade FROM itens_pedido WHERE pedido_id = $1 ORDER BY produto_id",
         [id],
       );
       for (const item of itens.rows) {
-        await client.query("UPDATE produtos SET quantidade = GREATEST(0, quantidade - $2) WHERE id = $1", [
-          item.produto_id,
-          item.quantidade,
-        ]);
+        const reserva = await client.query(
+          "UPDATE produtos SET quantidade = quantidade - $2 WHERE id = $1 AND ativo = true AND quantidade >= $2 RETURNING id",
+          [item.produto_id, item.quantidade],
+        );
+        if (!reserva.rowCount) {
+          throw ErroApp.conflito("Não é possível reativar o pedido: produto indisponível ou estoque insuficiente.");
+        }
       }
     }
   });
@@ -818,32 +893,36 @@ export async function atualizarStatusPedido(id: string, status: string, usuarioI
 
 export async function listarDashboard() {
   return emTransacao(async (client) => {
-    const [produtos, usuarios, pedidos, vendas] = await Promise.all([
-      client.query("SELECT COUNT(*)::int AS total FROM produtos WHERE ativo = true"),
-      client.query("SELECT COUNT(*)::int AS total FROM usuarios"),
-      client.query("SELECT COUNT(*)::int AS total FROM pedidos"),
-      client.query(
+    // Uma transação usa uma conexão: o pg executa suas consultas em sequência.
+    const [produtos, usuarios, pedidos, vendas] = [
+      await client.query("SELECT COUNT(*)::int AS total FROM produtos WHERE ativo = true"),
+      await client.query("SELECT COUNT(*)::int AS total FROM usuarios"),
+      await client.query(
+        "SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE status <> 'cancelado')::int AS ativos FROM pedidos",
+      ),
+      await client.query(
         "SELECT COALESCE(SUM(total_centavos), 0) AS total, COALESCE(SUM(subtotal_centavos - desconto_centavos), 0) AS liquido FROM pedidos WHERE status <> 'cancelado'",
       ),
-    ]);
+    ] as const;
 
     const totalVendasCentavos = Number(vendas.rows[0]?.total ?? 0);
     const quantidadePedidos = Number(pedidos.rows[0]?.total ?? 0);
     // Calcula em centavos para evitar perda de precisão, depois divide por 100.
-    const ticket = quantidadePedidos > 0 ? totalVendasCentavos / quantidadePedidos / 100 : 0;
+    const pedidosAtivos = Number(pedidos.rows[0]?.ativos ?? 0);
+    const ticket = pedidosAtivos > 0 ? totalVendasCentavos / pedidosAtivos / 100 : 0;
 
-    const [recentes, porDia, porCategoria, porStatus, estoqueBaixo, maisVendidos] = await Promise.all([
-      client.query(
+    const [recentes, porDia, porCategoria, porStatus, estoqueBaixo, maisVendidos] = [
+      await client.query(
         `SELECT p.id, COALESCE(u.nome, 'Visitante') AS cliente, p.total_centavos, p.status, p.criado_em
          FROM pedidos p LEFT JOIN usuarios u ON u.id = p.usuario_id
          ORDER BY p.criado_em DESC LIMIT 5`,
       ),
-      client.query(
+      await client.query(
         `SELECT to_char(date_trunc('day', criado_em), 'YYYY-MM-DD') AS dia, SUM(total_centavos) AS total
          FROM pedidos WHERE status <> 'cancelado' AND criado_em >= now() - interval '30 days'
          GROUP BY 1 ORDER BY 1 ASC`,
       ),
-      client.query(
+      await client.query(
         `SELECT c.nome AS categoria, SUM(i.quantidade)::int AS quantidade
          FROM itens_pedido i
          INNER JOIN produtos p ON p.id = i.produto_id
@@ -852,18 +931,18 @@ export async function listarDashboard() {
          WHERE pe.status <> 'cancelado'
          GROUP BY c.nome ORDER BY quantidade DESC`,
       ),
-      client.query("SELECT status, COUNT(*)::int AS total FROM pedidos GROUP BY status"),
-      client.query(
+      await client.query("SELECT status, COUNT(*)::int AS total FROM pedidos GROUP BY status"),
+      await client.query(
         "SELECT id, nome, quantidade FROM produtos WHERE ativo = true AND quantidade <= 5 ORDER BY quantidade ASC, nome ASC LIMIT 5",
       ),
-      client.query(
+      await client.query(
         `SELECT p.id, p.nome, p.preco_centavos, SUM(i.quantidade)::int AS vendidos
          FROM produtos p INNER JOIN itens_pedido i ON i.produto_id = p.id
          INNER JOIN pedidos pe ON pe.id = i.pedido_id
          WHERE pe.status <> 'cancelado'
          GROUP BY p.id ORDER BY vendidos DESC LIMIT 5`,
       ),
-    ]);
+    ] as const;
 
     return {
       totalProdutos: Number(produtos.rows[0]?.total ?? 0),
@@ -975,11 +1054,30 @@ export async function listarAvaliacoesDoUsuario(usuarioId: string) {
 
 export async function salvarAvaliacao(usuarioId: string, produtoId: string, nota: number, comentario: string) {
   await emTransacao(async (client) => {
+    // Uma trava por usuário/produto protege inclusive a primeira avaliação,
+    // quando ainda não existe linha para bloquear com FOR UPDATE.
+    await client.query("SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))", [
+      `avaliacao:${usuarioId}`,
+      produtoId,
+    ]);
+    // Cancelar ou reativar os pedidos elegíveis espera a conclusão da avaliação.
     await client.query(
-      `INSERT INTO avaliacoes (id, usuario_id, produto_id, nota, comentario)
-       VALUES ($1, $2, $3, $4, $5)
+      `SELECT p.id FROM pedidos p WHERE p.usuario_id = $1 AND p.status <> 'cancelado'
+       AND EXISTS (SELECT 1 FROM itens_pedido i WHERE i.pedido_id = p.id AND i.produto_id = $2)
+       ORDER BY p.id FOR SHARE`,
+      [usuarioId, produtoId],
+    );
+    if (!(await consultarPermissaoAvaliacao(client, usuarioId, produtoId))) {
+      throw ErroApp.semPermissao(
+        "A avaliação só fica disponível logo após uma nova compra que não esteja cancelada.",
+        "avaliacao_fora_da_janela",
+      );
+    }
+    await client.query(
+      `INSERT INTO avaliacoes (id, usuario_id, produto_id, nota, comentario, criado_em)
+       VALUES ($1, $2, $3, $4, $5, clock_timestamp())
        ON CONFLICT (usuario_id, produto_id)
-       DO UPDATE SET nota = EXCLUDED.nota, comentario = EXCLUDED.comentario, criado_em = now()`,
+       DO UPDATE SET nota = EXCLUDED.nota, comentario = EXCLUDED.comentario, criado_em = EXCLUDED.criado_em`,
       [randomUUID(), usuarioId, produtoId, nota, comentario],
     );
   });
@@ -1005,9 +1103,12 @@ export async function salvarAvaliacao(usuarioId: string, produtoId: string, nota
  * antigo que qualquer compra. O resultado sai direto como booleano.
  */
 export async function podeAvaliarProduto(usuarioId: string, produtoId: string): Promise<boolean> {
-  return emTransacao(async (client) => {
-    const resultado = await client.query(
-      `SELECT (
+  return emTransacao((client) => consultarPermissaoAvaliacao(client, usuarioId, produtoId));
+}
+
+async function consultarPermissaoAvaliacao(client: PoolClient, usuarioId: string, produtoId: string): Promise<boolean> {
+  const resultado = await client.query(
+    `SELECT (
          c.em IS NOT NULL
          AND COALESCE(a.criado_em, '-infinity'::timestamptz) < c.em
        ) AS pode
@@ -1022,10 +1123,9 @@ export async function podeAvaliarProduto(usuarioId: string, produtoId: string): 
        LEFT JOIN (
          SELECT criado_em FROM avaliacoes WHERE usuario_id = $2 AND produto_id = $1
        ) a ON true`,
-      [produtoId, usuarioId],
-    );
-    return resultado.rows[0]?.pode ?? false;
-  });
+    [produtoId, usuarioId],
+  );
+  return resultado.rows[0]?.pode ?? false;
 }
 
 // ── Inicialização ──────────────────────────────────────────────────────────

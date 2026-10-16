@@ -4,9 +4,9 @@
  * São os schemas Zod que o Fastify valida. O tipo inferido de cada um é o
  * que o `apps/web` recebe, então mudar a entrada muda os dois lados juntos.
  *
- * As respostas estão em `./respostas.ts`, separadas porque têm um-tradeoff
- * diferente: validá-las em toda requisição tem custo que aqui não se paga na
- * entrada.
+ * As respostas em `./respostas.ts` derivam destes modelos e são validadas
+ * antes de sair do servidor. Entradas podem normalizar valores; saídas não
+ * devem mascarar uma violação do contrato.
  */
 import { z } from "zod";
 
@@ -42,6 +42,13 @@ export const STATUS_PEDIDO = ["processando", "enviado", "finalizado", "cancelado
 export const statusPedido = z.enum(STATUS_PEDIDO);
 export type StatusPedido = z.infer<typeof statusPedido>;
 
+export const TRANSICOES_PEDIDO: Record<StatusPedido, readonly StatusPedido[]> = {
+  processando: ["enviado", "cancelado"],
+  enviado: ["finalizado"],
+  finalizado: [],
+  cancelado: ["processando"],
+};
+
 export const METODOS_PAGAMENTO = ["pix", "cartao", "boleto"] as const;
 export const metodoPagamento = z.enum(METODOS_PAGAMENTO);
 export type MetodoPagamento = z.infer<typeof metodoPagamento>;
@@ -63,6 +70,37 @@ export type Sessao = z.infer<typeof sessao>;
 
 export const CAMPOS_ENDERECO = ["cep", "rua", "numero", "complemento", "bairro", "cidade", "estado"] as const;
 
+export const UF = [
+  "AC",
+  "AL",
+  "AP",
+  "AM",
+  "BA",
+  "CE",
+  "DF",
+  "ES",
+  "GO",
+  "MA",
+  "MT",
+  "MS",
+  "MG",
+  "PA",
+  "PB",
+  "PR",
+  "PE",
+  "PI",
+  "RJ",
+  "RN",
+  "RS",
+  "RO",
+  "RR",
+  "SC",
+  "SP",
+  "SE",
+  "TO",
+] as const;
+export const estadoBrasileiro = z.enum(UF, { error: "Informe uma UF brasileira válida." });
+
 export const endereco = z.object({
   cep: z.string(),
   rua: z.string(),
@@ -70,7 +108,7 @@ export const endereco = z.object({
   complemento: z.string(),
   bairro: z.string(),
   cidade: z.string(),
-  estado: z.string().length(2),
+  estado: estadoBrasileiro,
 });
 export type Endereco = z.infer<typeof endereco>;
 
@@ -82,7 +120,7 @@ export const enderecoInput = z.object({
   complemento: z.string().trim().default(""),
   bairro: z.string().trim().min(1, "Informe o bairro."),
   cidade: z.string().trim().min(1, "Informe a cidade."),
-  estado: z.string().trim().toUpperCase().length(2, "UF deve ter 2 letras."),
+  estado: z.string().trim().toUpperCase().pipe(estadoBrasileiro),
 });
 export type EnderecoInput = z.infer<typeof enderecoInput>;
 
@@ -91,12 +129,12 @@ export type EnderecoInput = z.infer<typeof enderecoInput>;
 export const produto = z.object({
   id: z.string(),
   nome: z.string(),
-  descricao: z.string(),
+  descricao: z.string().nullish(),
   preco: money,
   quantidade: z.number().int().nonnegative(),
   categoria: z.string(),
   imagem: z.string().nullish(),
-  ativo: z.union([z.boolean(), z.literal(1), z.literal(0)]).nullish(),
+  ativo: z.boolean().nullish(),
 });
 export type Produto = z.infer<typeof produto>;
 
@@ -105,16 +143,27 @@ export type Produto = z.infer<typeof produto>;
 // ao pacote, o que vazaria o global para o lado do servidor.
 const protocoloHttp = /^https?:\/\//i;
 
+// Caminho local servido pelo próprio site (`/imagens/teclado.jpg`), que é o
+// formato das fotos do seed. Um caminho relativo que não começa com `/` fica
+// de fora: sem a barra o navegador resolveria contra a página atual
+// (`/produto/imagens/x.jpg`) e a foto quebraria sem erro nenhum.
+const caminhoLocal = /^\/\S*$/;
+
 export const produtoInput = z.object({
   nome: z.string().trim().min(2, "Informe um nome válido para o produto.").max(160),
   descricao: z.string().trim().max(800, "A descrição pode ter no máximo 800 caracteres.").default(""),
-  preco: money,
-  quantidade: z.number().int().nonnegative(),
+  preco: money.max(21_474_836.47, "O preço ultrapassa o limite permitido."),
+  quantidade: z.number().int().nonnegative().max(2_147_483_647, "O estoque ultrapassa o limite permitido."),
   categoriaId: z.string().trim().min(1, "Selecione uma categoria."),
   imagem: z
     .string()
     .trim()
-    .regex(protocoloHttp, "A imagem deve usar um endereço http ou https.")
+    // `refine` e não `.regex()`: o valor aceito tem dois formatos, o endereço
+    // externo e o caminho local, e cada um tem o próprio desenho. Uma única
+    // regex combinando os dois leria pior e não dizia qual dos dois falhou.
+    .refine((valor) => protocoloHttp.test(valor) || caminhoLocal.test(valor), {
+      message: "A imagem deve usar um endereço http/https ou começar com `/`.",
+    })
     .optional()
     .or(z.literal("").transform(() => undefined)),
 });
@@ -129,6 +178,7 @@ export const itemPedidoInput = z.object({
 export type ItemPedidoInput = z.infer<typeof itemPedidoInput>;
 
 export const pedidoInput = z.object({
+  chaveIdempotencia: z.uuid().optional(),
   itens: z.array(itemPedidoInput).min(1, "O carrinho está vazio."),
   cupomCodigo: z.string().trim().min(1).optional(),
   metodoPagamento: metodoPagamento.default("pix"),
@@ -142,7 +192,7 @@ export const pedido = z.object({
   frete: money,
   total_final: money,
   status: statusPedido,
-  metodo_pagamento: z.string().nullish(),
+  metodo_pagamento: metodoPagamento.nullish(),
   status_pagamento: z.string().nullish(),
   criado_em: z.string().nullish(),
 });

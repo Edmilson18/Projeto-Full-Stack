@@ -23,6 +23,7 @@ export function CartPanel({
   const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
   const [itemParaRemover, setItemParaRemover] = useState<{ id: string; nome: string } | null>(null);
   const [confirmarLimpar, setConfirmarLimpar] = useState(false);
+  const selecionadosAtuais = new Set(carrinho.filter((item) => selecionados.has(item.id)).map((item) => item.id));
 
   const abrirConfirmacaoRemover = (id: string, nome: string) => {
     setItemParaRemover({ id, nome });
@@ -65,7 +66,7 @@ export function CartPanel({
   };
 
   const selecionarTodos = () => {
-    if (selecionados.size === carrinho.length) {
+    if (selecionadosAtuais.size === carrinho.length) {
       setSelecionados(new Set());
     } else {
       setSelecionados(new Set(carrinho.map((item) => item.id)));
@@ -115,7 +116,7 @@ export function CartPanel({
 
           <div className="cart-actions-top">
             <button className="text-btn" onClick={selecionarTodos}>
-              {selecionados.size === carrinho.length ? "Desmarcar todos" : "Selecionar todos"}
+              {selecionadosAtuais.size === carrinho.length ? "Desmarcar todos" : "Selecionar todos"}
             </button>
             <button className="text-btn danger" onClick={abrirConfirmacaoLimpar}>
               <Trash2 size={14} /> Limpar carrinho
@@ -127,7 +128,7 @@ export function CartPanel({
               <div className="cart-item" key={item.id}>
                 <input
                   type="checkbox"
-                  checked={selecionados.has(item.id)}
+                  checked={selecionadosAtuais.has(item.id)}
                   onChange={() => toggleSelecao(item.id)}
                   className="cart-checkbox"
                   aria-label={`Selecionar ${item.nome}`}
@@ -153,15 +154,20 @@ export function CartPanel({
             ))}
           </div>
 
-          {selecionados.size > 0 && (
+          {selecionadosAtuais.size > 0 && (
             <div className="cart-footer">
               <div className="cart-summary">
                 <span>
-                  {selecionados.size === 1 ? "1 item selecionado" : `${selecionados.size} itens selecionados`}
+                  {selecionadosAtuais.size === 1
+                    ? "1 item selecionado"
+                    : `${selecionadosAtuais.size} itens selecionados`}
                 </span>
                 <strong>{formatarMoeda(totalSelecionado)}</strong>
               </div>
-              <button className="primary-btn full" onClick={() => onComprarSelecionados(Array.from(selecionados))}>
+              <button
+                className="primary-btn full"
+                onClick={() => onComprarSelecionados(Array.from(selecionadosAtuais))}
+              >
                 <ShoppingCart size={18} />
                 Comprar selecionados
               </button>

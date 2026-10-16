@@ -8,7 +8,7 @@
 
 ## Contexto
 
-O schema define os valores em ponto flutuante:
+Antes da migração para PostgreSQL, o schema SQLite definia valores em ponto flutuante:
 
 ```sql
 preco        REAL NOT NULL CHECK (preco >= 0),
@@ -17,7 +17,7 @@ desconto     REAL NOT NULL DEFAULT 0,
 total_final  REAL NOT NULL,
 ```
 
-E o cálculo do pedido é feito em `number` do JavaScript:
+O cálculo antigo do pedido era feito em reais com `number` do JavaScript:
 
 ```ts
 const desconto = subtotal * (porcentagemDesconto / 100);
@@ -44,36 +44,39 @@ constante na aplicação.
 
 **Guardar em centavos, como `INTEGER`.** A operação deixa de ser
 representação aproximada e passa a ser aritmética exata, que o JavaScript faz
-corretamente dentro da faixa segura de `Number` — até 2^53, o que dá mais de
-90 trilhões de centavos.
+corretamente dentro da faixa segura de `Number`. Neste projeto, porém, o limite
+efetivo de cada coluna é o `INTEGER` de 32 bits do PostgreSQL: 2.147.483.647 centavos
+(R$ 21.474.836,47). A API limita preço, subtotal e total a essa faixa, antes de gravar.
 
 ## Decisão
 
 Armazenar dinheiro em **centavos inteiros**, com o nome da coluna explícito:
 `preco_centavos INTEGER NOT NULL CHECK (preco_centavos >= 0)`.
 
-A conversão para exibição acontece em um único lugar, na fronteira da API, com
-uma função de formatação. Nenhum cálculo intermediário toca em ponto
-flutuante.
+O cadastro converte reais em centavos com `Math.round(preco * 100)`. O checkout
+calcula com os centavos lidos do banco; descontos percentuais são arredondados com
+`Math.round`. A API divide por 100 ao preparar as respostas em reais, e a interface
+usa `formatarMoeda` para exibição. Essa implementação usa `number`; centavos inteiros
+evitam acumular frações monetárias durante as somas, dentro dos limites validados.
 
 ## Consequências
 
 **Positivo**
 
 - Soma de itens iguala o total, sempre. Conciliação deixa de ser um problema.
-- Nenhuma regra de arredondamento espalhada pela aplicação.
+- Arredondamento explícito na entrada do preço e no cálculo do desconto percentual.
 - `CHECK (preco_centavos >= 0)` continua valendo, com tipagem correta.
 
 **Negativo**
 
 - Todo o código que toca dinheiro passa a multiplicar e dividir por 100. É a
   desvantagem real desta abordagem e precisa de disciplina.
-- Migração de dados: os valores existentes em `REAL` precisam ser convertidos
-  com `ROUND(preco * 100)`, e a coluna precisa ser recriada, porque SQLite não
-  altera tipo de coluna em `ALTER`.
+- A migração inicial do PostgreSQL cria as colunas em centavos. Importar um banco
+  SQLite antigo requer conversão explícita; não há importador automático neste projeto.
 
 **Mitigação**
 
-A conversão fica confinada às funções de formatação e a um par de helpers
-explícitos no pacote compartilhado, `paraCentavos` e `deCentavos`, para que
-multiplicar por 100 não apareça espalhado.
+As colunas usam o sufixo `_centavos`, e os contratos documentam a unidade dos campos.
+Os testes conferem soma de itens, arredondamento, descontos e rejeição de totais fora
+da faixa. Não existem helpers `paraCentavos`/`deCentavos` no estado atual; as conversões
+ficam nas funções do banco e na preparação das respostas.

@@ -1,99 +1,43 @@
-# ADR 003: Monorepo com workspaces e cache de build
+# ADR 003: Monorepo com npm workspaces
 
-- **Status:** Parcialmente adotada
-- **Data:** 2026-09-25
-- **Escopo:** Organização do repositório
-- **O que foi realmente adotado:** a estrutura de três pacotes, com **npm
-  workspaces**. Nem o pnpm nem o Turborepo entraram: o pnpm exige privilégio de
-  administrador no ambiente de execução, e o cache de build do Turborepo foi
-  dispensado porque, com três pacotes, o `npm run build` em sequência já é rápido
-  o bastante para não justificar o grafo de cache. O `package.json` da raiz
-  declara `"packageManager": "npm@12.0.2"`.
-- **Título original:** "Monorepo com pnpm workspaces e Turborepo". O nome do
-  arquivo continua o original para não quebrar links.
+- **Status:** Aceita
+- **Data da decisão original:** 2026-09-25
+- **Revisada em:** 2026-10-15
+- **Escopo:** Organização do repositório e instalação reproduzível
+- **Título original:** Monorepo com pnpm workspaces e Turborepo. O nome do arquivo foi preservado para manter os links existentes.
 
 ## Contexto
 
-Hoje o projeto é um pacote único. `src/server.ts` e `src/App.tsx` dividem o
-mesmo `tsconfig.json` e o mesmo conjunto de dependências, apesar de rodarem em
-ambientes diferentes: um em Node com SQLite, o outro no browser.
+API e interface rodam em ambientes diferentes, mas compartilham contratos de entrada e saída. A estrutura precisa permitir dependências e comandos por aplicação e um único lockfile para reproduzir o conjunto.
 
-A Fase 3 vai trocar o servidor, e a Fase 6 vai decompor o componente de 1.379
-linhas do frontend. Nenhuma das duas deveria exigir mexer na estrutura de
-pastas, e o contrato entre API e web precisa ser uma coisa só, não uma
-convenção mantida à mão.
+A auditoria encontrou uma divergência concreta: os manifestos declaravam versões de ferramentas diferentes das registradas no lockfile e instaladas localmente. A raiz usava TypeScript 5.9.3 instalado apesar de declarar 7, enquanto a web resolvia Vitest 3 apesar de declarar 5.
 
-## Alternativas consideradas
-
-**Manter pacote único.** Sem mudança de estrutura. Contra: não há como o
-frontend importar um tipo do servidor, então o contrato compartilhado vira
-duplicação. E a dependência entre o deploy do servidor e o build do cliente
-continua implícita.
-
-**Workspaces do npm com `concurrently`.** Mais simples de configurar, sem
-dependência nova. Contra: o npm não faz content-addressable store, então cada
-pacote recebe sua própria cópia de `typescript` e `react`. Divergências de
-versão entre pacotes são a causa mais comum de `Cannot find module` que só
-aparece em CI.
-
-**Nx.** Mais completo que o Turborepo, com grafo de dependências e daemon de
-cache. Contra: muito mais configuração. Para três pacotes, é $$$$$$$$$$$$$$
-desgaste desproporcional ao ganho.
-
-**Bun workspaces.** Mais simples e rápido. Contra: adoption ainda menor que a do
-pnpm, e trocar de runtime agora aumentaria o escopo da fase sem resolver
-nenhum dos problemas deste ADR.
+Essa divergência foi corrigida alinhando manifestos e lockfile. Ela não é uma consequência inevitável de usar npm workspaces. O npm também possui cache endereçado por conteúdo; isso é diferente do modelo de instalação do pnpm e não garante, por si só, uma árvore sem versões duplicadas. [Documentação do cache npm](https://docs.npmjs.com/cli/v11/commands/npm-cache/).
 
 ## Decisão
 
-Workspaces em três pacotes. **npm**, sem cache de build:
+Manter npm workspaces em três pacotes:
 
+```text
+apps/api         Fastify e PostgreSQL
+apps/web         React e Vite
+packages/shared  Schemas Zod e contratos
 ```
-apps/api        Fastify, PostgreSQL via pg
-apps/web        React 19 com Vite
-packages/shared Esquemas Zod e tipos
-```
 
-O `packages/shared` é a peça central: é o que o frontend e o servidor
-importam, e o que impede a duplicação do contrato.
+Usar `npm ci` para instalação a partir do lockfile e `npm ls --depth=0` para conferir a coerência das versões declaradas. Mudanças de dependências devem atualizar manifesto e lockfile juntos. [Documentação de npm ci](https://docs.npmjs.com/cli/v11/commands/npm-ci/).
 
-Duas partes da decisão original **não** foram implementadas, e cada uma por um
-motivo diferente:
+Os scripts da raiz compilam shared antes de executar consumidores em desenvolvimento, checagem de tipos, testes e cobertura. O build permanece sequencial: shared, API e web.
 
-- **pnpm.** Requer privilégio de administrador para instalar, indisponível no
-  ambiente de execução. O npm não tem store content-addressable, então cada
-  pacote recebe sua própria cópia de `typescript`, `vitest` e `jsdom`. Isso é a
-  dívida real que a decisão original pretendia evitar.
-- **Turborepo.** O cache de build foi descartado depois de medir: `npm run
-  build` leva poucos segundos e, sem cache, recompila o `packages/shared` de
-  todo modo. Para três pacotes, a configuração do grafo custaria mais do que
-  economiza.
+## Alternativas
+
+- **pnpm workspaces:** opção válida se o modelo de instalação trouxer benefício medido. Uma restrição anterior de permissão no ambiente não é uma limitação inerente do gerenciador. Não é necessário trocar para resolver as divergências encontradas.
+- **Turborepo/Nx:** podem organizar grafo e cache de tarefas. No tamanho atual, scripts explícitos atendem às dependências de build sem uma camada adicional.
+- **Pacote único:** reduz pastas, mas mistura dependências de navegador/servidor e torna a fronteira dos contratos menos explícita.
 
 ## Consequências
 
-**Positivo**
-
-- O contrato Zod é um pacote real, com o tipo inferido nos dois lados.
-- O deploy trata `apps/web` e `apps/api` como projetos independentes, sem
-  reescrever pipeline.
-- Um lockfile só, e ferramentas que já vinham no ambiente de execução.
-
-**Negativo**
-
-- Sem store content-addressable, cada pacote recebe sua própria cópia de
-  `typescript`, `vitest` e `jsdom`, em versões diferentes. É a origem de
-  "funciona num pacote e falha no outro", e de uma classe de bug que só aparece
-  depois de um `npm install`.
-- Sem cache de build, todo `npm run build` recompila os três pacotes. Aceitável
-  no tamanho atual; vira incômodo se o `apps/web` crescer.
-- `npm run typecheck` e `npm test` precisam compilar o `packages/shared`
-  antes, porque `apps/api` e `apps/web` importam os tipos do `dist/` dele. A
-  ordem está explícita no `package.json` da raiz.
-- Debug de resolução de módulos fica um nível mais profundo, o que exige
-- Debug de resolução de módulos não muda: continua sendo o do npm.
-- Um segundo lockfile não existe: segue um só.
-
-**Mitigação**
-
-A migração foi feita mantendo a aplicação funcionando a cada passo, com
-`npm run dev` e `npm test` validados.
+- Há um único pacote de contratos e um único lockfile.
+- A compilação de shared precisa anteceder tarefas consumidoras, pois os imports apontam para seu `dist`.
+- O modo de desenvolvimento ainda exige recompilar shared ao editar contratos; não há watcher desse pacote nesta etapa.
+- Versões coerentes exigem manutenção dos manifestos e validação em CI, independentemente do gerenciador.
+- Não há cache de tarefas entre execuções. Reavaliar se o tempo de build justificar essa complexidade.

@@ -20,6 +20,7 @@ import {
   validarCupomCodigo,
 } from "../database.js";
 import { ErroApp } from "../erros.js";
+import { validarEntrada } from "../validacao.js";
 import { exigirAdmin, exigirSessao } from "./auth.js";
 
 export async function registrarRotasPedidos(app: FastifyInstance) {
@@ -27,25 +28,27 @@ export async function registrarRotasPedidos(app: FastifyInstance) {
 
   app.post("/api/pedidos", async (req, reply) => {
     const usuario = await exigirSessao(req);
-    const entrada = pedidoInput.parse(req.body);
+    const entrada = validarEntrada(pedidoInput, req.body);
 
-    // Reuso de cupom é uma operação de escrita, e Limitador simples não
-    // resolve: duas requisições no mesmo instante passam. A Fase 7 traz chave
-    // de idempotência.
-    //
     // Sem `try/catch`: as regras de negócio lançam `ErroApp` e o tratador
     // global já devolve 4xx com a mensagem. O `catch` genérico que existia
     // convertia em 400 também o erro do banco, expondo o nome da constraint na
     // resposta e escondendo falha de infraestrutura como se fosse erro do
     // cliente.
-    const pedido = await criarPedido(usuario.id, entrada.itens, entrada.cupomCodigo, entrada.metodoPagamento);
+    const pedido = await criarPedido(
+      usuario.id,
+      entrada.itens,
+      entrada.cupomCodigo,
+      entrada.metodoPagamento,
+      entrada.chaveIdempotencia,
+    );
 
     reply.code(201);
     return { pedido: pedidoCriado.parse(pedido) };
   });
 
   app.post("/api/cupons/validar", async (req) => {
-    const { codigo } = cupomValidarInput.parse(req.body);
+    const { codigo } = validarEntrada(cupomValidarInput, req.body);
     const texto = codigo.trim();
     if (!texto) throw ErroApp.badRequest("Informe um código de cupom.");
 
@@ -72,7 +75,7 @@ export async function registrarRotasPedidos(app: FastifyInstance) {
 
   app.patch("/api/admin/pedidos/:id", async (req) => {
     const usuario = await exigirAdmin(req);
-    const { status } = statusPedidoInput.parse(req.body);
+    const { status } = validarEntrada(statusPedidoInput, req.body);
     const id = String((req.params as Record<string, unknown>).id ?? "");
 
     // O estado anterior e a auditoria são resolvidos dentro da transação de

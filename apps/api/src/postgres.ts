@@ -2,7 +2,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Pool, type PoolClient } from "pg";
+import { setTimeout as aguardar } from "node:timers/promises";
 import { ambiente } from "./config.js";
+import { conexaoPostgres } from "./seguranca.js";
 
 const RAIZ = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const PASTA_MIGRACOES = path.join(RAIZ, "database", "migrations");
@@ -10,13 +12,8 @@ const PASTA_MIGRACOES = path.join(RAIZ, "database", "migrations");
 /**
  * Pool de conexões.
  *
- * O `pg` abre uma conexão TCP por requisição se deixado solto. Em serverless
- * isso estoura o limite de conexões do Postgres, porque cada instância fria
- * criaria a sua. O pool mantém um número fixo e reutiliza.
- *
- * Em Vercel, que é o alvo de deploy, é preciso usar o driver HTTP do Neon
- * (`@neondatabase/serverless`) em vez deste: o pool TCP não sobrevive ao
- * ambiente serverless. Ver docs/adr/005-banco-postgresql-neon.md.
+ * Reutiliza conexões dentro de cada processo. O limite total depende também
+ * do número de instâncias e deve ser dimensionado para a hospedagem escolhida.
  */
 let pool: Pool | null = null;
 
@@ -42,7 +39,7 @@ export function obterPool(): Pool {
   // aqui direto veria um ambiente vazio, porque o ESM avalia os imports antes
   // do corpo de quem importa.
   pool = new Pool({
-    connectionString: ambiente.databaseUrl,
+    ...conexaoPostgres(ambiente.databaseUrl, ambiente.databaseSsl),
     max: 10,
     idleTimeoutMillis: 30_000,
     connectionTimeoutMillis: 10_000,
@@ -50,9 +47,6 @@ export function obterPool(): Pool {
     // cairia no schema `public` e os testes escreveriam no banco de
     // desenvolvimento.
     options: `-c search_path=${ambiente.schema}`,
-    // TLS é obrigatório no Neon, que só aceita conexão criptografada. Fica
-    // desligado por padrão porque o Postgres local não usa TLS.
-    ...(ambiente.databaseSsl ? { ssl: { rejectUnauthorized: false } } : {}),
   });
 
   pool.on("error", (erro) => {
@@ -69,19 +63,33 @@ export function fecharPool(): Promise<void> {
   return atual.end();
 }
 
-/** Executa uma função dentro de uma transação, com rollback em erro. */
+/**
+ * Até três tentativas para deadlock/serialização, sempre após rollback.
+ * O callback deve conter somente operações transacionais no banco: nenhum
+ * envio de e-mail, HTTP ou outro efeito externo que possa ser repetido.
+ * Erros de conexão/COMMIT ambíguo e falhas de negócio não são repetidos.
+ */
 export async function emTransacao<T>(fn: (client: PoolClient) => Promise<T>): Promise<T> {
-  const client = await obterPool().connect();
-  try {
-    await client.query("BEGIN");
-    const resultado = await fn(client);
-    await client.query("COMMIT");
-    return resultado;
-  } catch (erro) {
-    await client.query("ROLLBACK");
-    throw erro;
-  } finally {
-    client.release();
+  for (let tentativa = 1; ; tentativa++) {
+    const client = await obterPool().connect();
+    let descartar = false;
+    try {
+      await client.query("BEGIN");
+      const resultado = await fn(client);
+      await client.query("COMMIT");
+      return resultado;
+    } catch (erro) {
+      try {
+        await client.query("ROLLBACK");
+      } catch {
+        descartar = true;
+      }
+      const codigo = typeof erro === "object" && erro !== null && "code" in erro ? erro.code : null;
+      if (descartar || tentativa >= 3 || (codigo !== "40P01" && codigo !== "40001")) throw erro;
+    } finally {
+      client.release(descartar);
+    }
+    await aguardar(10 * tentativa + Math.random() * 20);
   }
 }
 
@@ -96,11 +104,19 @@ type MigracaoAplicada = { nome: string; aplicada_em: Date };
  * Cada migração roda dentro de uma transação: se ela falhar pela metade, o
  * banco fica como estava.
  */
-export async function aplicarMigracoes(): Promise<string[]> {
-  const client = await obterPool().connect();
+export async function aplicarMigracoes(conexoes: Pool = obterPool()): Promise<string[]> {
+  const client = await conexoes.connect();
   const aplicadas: string[] = [];
+  let travada = false;
+  let descartar = false;
 
   try {
+    // A trava vem antes até da criação do registro. É por banco/schema e
+    // pertence à conexão, cobrindo os commits de todas as migrações do lote.
+    await client.query(
+      "SELECT pg_advisory_lock(hashtext(current_database()), hashtext(current_schema() || ':migracoes'))",
+    );
+    travada = true;
     await client.query(`
       CREATE TABLE IF NOT EXISTS migracoes (
         nome        TEXT PRIMARY KEY,
@@ -132,7 +148,17 @@ export async function aplicarMigracoes(): Promise<string[]> {
       }
     }
   } finally {
-    client.release();
+    if (travada) {
+      try {
+        await client.query(
+          "SELECT pg_advisory_unlock(hashtext(current_database()), hashtext(current_schema() || ':migracoes'))",
+        );
+      } catch {
+        // Fechar a conexão libera a trava mesmo se o desbloqueio falhar.
+        descartar = true;
+      }
+    }
+    client.release(descartar);
   }
 
   return aplicadas;

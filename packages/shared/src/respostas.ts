@@ -20,21 +20,12 @@
  */
 import { z } from "zod";
 
-import { metodoPagamento, statusPedido, usuarioPublico } from "./schemas.js";
+import { metodoPagamento, money, pedido, produto, sessao, statusPedido, usuarioPublico } from "./schemas.js";
 
 /** Preço em reais, como o cliente vê. Vem de centavos divided por 100. */
-export const preco = z.number().nonnegative();
+export const preco = money;
 
-export const produtoResponse = z.object({
-  id: z.string(),
-  nome: z.string(),
-  descricao: z.string().nullish(),
-  preco,
-  quantidade: z.number().int(),
-  categoria: z.string(),
-  imagem: z.string().nullish(),
-  ativo: z.boolean().nullish(),
-});
+export const produtoResponse = produto;
 export type ProdutoResponse = z.infer<typeof produtoResponse>;
 
 export const listaProdutos = z.array(produtoResponse);
@@ -67,6 +58,7 @@ export const cupomDisponivel = z.object({
   codigo: z.string(),
   tipoDesconto: z.string(),
   porcentagemDesconto: z.number(),
+  desconto: preco,
   valorMinimo: z.number(),
 });
 export type CupomDisponivel = z.infer<typeof cupomDisponivel>;
@@ -96,16 +88,7 @@ export const itemPedidoResponse = z.object({
 });
 export type ItemPedidoResponse = z.infer<typeof itemPedidoResponse>;
 
-export const pedidoResponse = z.object({
-  id: z.string(),
-  subtotal: preco,
-  desconto: preco,
-  frete: preco,
-  total_final: preco,
-  status: statusPedido,
-  metodo_pagamento: z.string().nullish(),
-  status_pagamento: z.string().nullish(),
-  criado_em: z.string().nullish(),
+export const pedidoResponse = pedido.extend({
   itens: z.array(itemPedidoResponse).nullish(),
 });
 export type PedidoResponse = z.infer<typeof pedidoResponse>;
@@ -241,9 +224,7 @@ export const cadastroResponse = z.object({
 });
 export type CadastroResponse = z.infer<typeof cadastroResponse>;
 
-export const sessaoResponse = z.object({
-  usuario: usuarioPublico.nullish(),
-});
+export const sessaoResponse = sessao;
 export type SessaoResponse = z.infer<typeof sessaoResponse>;
 
 export const logoutResponse = z.object({

@@ -9,7 +9,7 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "concurrently -n api,web -c blue,green \"npm:dev:api\" \"npm:dev:web\"",
+    "dev": "npm run build -w @loja/shared && concurrently -k -n api,web -c blue,green \"npm:dev:api\" \"npm:dev:web\"",
     "dev:api": "npm run dev -w @loja/api",
     "dev:web": "npm run dev -w @loja/web",
     "build": "npm run build -w @loja/shared && npm run build -w @loja/api && npm run build -w @loja/web",
@@ -24,9 +24,9 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "npm run build -w @loja/shared && npm run test --workspaces --if-present",
-    "test:watch": "npm run test:watch --workspaces --if-present",
-    "test:coverage": "npm run test:coverage --workspaces --if-present",
-    "verify": "npm run typecheck && npm run lint && npm run test",
+    "test:watch": "npm run build -w @loja/shared && concurrently -k -n api,web -c blue,green \"npm run test:watch -w @loja/api\" \"npm run test:watch -w @loja/web\"",
+    "test:coverage": "npm run build -w @loja/shared && npm run test:coverage -w @loja/api",
+    "verify": "npm run typecheck && npm run lint && npm run format:check && npm run test && npm run build",
     "commitlint": "commitlint --edit",
     "prepare": "husky"
   },
@@ -45,7 +45,7 @@
     "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.3.3",
     "@vitejs/plugin-react": "^6.1.1",
-    "@vitest/coverage-v8": "^5.0.2",
+    "@vitest/coverage-v8": "^5.0.3",
     "concurrently": "^10.0.5",
     "husky": "^9.1.7",
     "jsdom": "^30.1.1",

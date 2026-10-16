@@ -1,5 +1,6 @@
 import { ambiente } from "./config.js";
 import { obterPool, fecharPool } from "./postgres.js";
+import { bancoLocal } from "./seguranca.js";
 
 /**
  * Apaga o schema público inteiro e recria.
@@ -19,9 +20,7 @@ import { obterPool, fecharPool } from "./postgres.js";
  * antes: como o valor do `.env` só existe depois do `dotenv`, a guarda
  * rodaria sobre um ambiente vazio e passaria.
  */
-const isLocalhost = ambiente.databaseUrl.includes("localhost") || ambiente.databaseUrl.includes("127.0.0.1");
-
-if (!isLocalhost) {
+if (!bancoLocal(ambiente.databaseUrl)) {
   console.error("db:reset só pode rodar contra um banco local.");
   process.exit(1);
 }

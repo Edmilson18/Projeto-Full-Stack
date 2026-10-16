@@ -39,12 +39,17 @@ const { ambiente } = await import("../config.js");
 const { fecharPool, aplicarMigracoes } = await import("../postgres.js");
 const { garantirAdministrador } = await import("../database.js");
 const { semear } = await import("../seed.js");
+const { conexaoPostgres } = await import("../seguranca.js");
 
 let admin: InstanceType<typeof Pool>;
 
 beforeAll(async () => {
   // Pool separado, sem `search_path`: é o que cria e apaga o schema.
-  admin = new Pool({ connectionString: ambiente.databaseUrl, max: 1 });
+  admin = new Pool({
+    ...conexaoPostgres(ambiente.databaseUrl, ambiente.databaseSsl),
+    max: 1,
+    connectionTimeoutMillis: 10_000,
+  });
 
   await admin.query(`DROP SCHEMA IF EXISTS ${citarSchema(SCHEMA)} CASCADE`);
   await admin.query(`CREATE SCHEMA ${citarSchema(SCHEMA)}`);

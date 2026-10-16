@@ -4,7 +4,6 @@ import { formatarMoeda, imagemDe } from "../lib/utils.js";
 
 type ProductCardProps = {
   produto: ProdutoResponse;
-  indice?: number;
   variante?: "featured" | "default" | "compact";
   favorito?: boolean;
   onAbrir: (produto: ProdutoResponse) => void;
@@ -14,7 +13,6 @@ type ProductCardProps = {
 
 export function ProductCard({
   produto,
-  indice = 0,
   variante = "default",
   favorito = false,
   onAbrir,
@@ -24,7 +22,7 @@ export function ProductCard({
   if (variante === "compact") {
     return (
       <article className="product-card compact" onClick={() => onAbrir(produto)}>
-        <img src={imagemDe(produto, indice)} alt={produto.nome} />
+        <img src={imagemDe(produto)} alt={produto.nome} />
         <div className="product-body">
           <h4>{produto.nome}</h4>
           <strong>{formatarMoeda(produto.preco)}</strong>
@@ -35,7 +33,7 @@ export function ProductCard({
 
   return (
     <article className={`product-card ${variante === "featured" ? "featured" : ""}`} onClick={() => onAbrir(produto)}>
-      <img src={imagemDe(produto, indice)} alt={produto.nome} />
+      <img src={imagemDe(produto)} alt={produto.nome} />
       <div className="product-body">
         <span className="tag">{produto.categoria}</span>
         <h4>{produto.nome}</h4>

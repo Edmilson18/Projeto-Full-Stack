@@ -24,8 +24,7 @@ if (executadoDiretamente) {
 
   if (!process.env.NODE_ENV && !ambiente.producao) {
     console.warn(
-      "[aviso] NODE_ENV não definido. Assumindo 'development', o que expõe o token de " +
-        "redefinição de senha na resposta de /api/recuperar-senha. Defina NODE_ENV no .env.",
+      "[aviso] NODE_ENV não definido. Configure development, test ou production explicitamente no ambiente.",
     );
   }
 

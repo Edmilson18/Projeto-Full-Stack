@@ -6,7 +6,6 @@ import cookie from "@fastify/cookie";
 import cors from "@fastify/cors";
 import helmet from "@fastify/helmet";
 import rateLimit from "@fastify/rate-limit";
-import { ZodError } from "zod";
 import type { FastifyReply } from "fastify";
 import { ambiente } from "./config.js";
 import { ErroApp } from "./erros.js";
@@ -96,7 +95,7 @@ export function criarApp(opcoes: OpcoesApp = {}) {
           },
         },
     bodyLimit: 1_000_000,
-    trustProxy: ambiente.producao,
+    trustProxy: ambiente.proxiesConfiaveis.length ? ambiente.proxiesConfiaveis : false,
   });
 
   // Sem `secret`: o token de sessão é um valor aleatório de 32 bytes e a
@@ -146,18 +145,13 @@ export function criarApp(opcoes: OpcoesApp = {}) {
   /**
    * Tratador único de erro.
    *
-   * `ErroApp` chega ao cliente com o status e a mensagem que carrega. `ZodError`
-   * vira 400 com a mensagem do primeiro problema. Qualquer outra coisa é 500
+   * A validação de entrada produz `ErroApp` com status 400. Falhas de contrato
+   * na saída e qualquer outro erro inesperado são 500
    * sem detalhe interno, e o motivo vai só para o log.
    */
   app.setErrorHandler((erro, req, reply) => {
     if (erro instanceof ErroApp) {
       return reply.code(erro.status).send({ erro: erro.message });
-    }
-
-    if (erro instanceof ZodError) {
-      const primeiro = erro.issues[0];
-      return reply.code(400).send({ erro: primeiro?.message ?? "Dados inválidos." });
     }
 
     // Erros do próprio Fastify (payload grande, JSON malformado) trazem

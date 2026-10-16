@@ -1,14 +1,18 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { LogOut } from "lucide-react";
-import type { AvaliacaoResponse, CepResponse, Conta, ProdutoResponse } from "@loja/shared";
+import type { CepResponse, ProdutoResponse, RecuperarSenhaResponse } from "@loja/shared";
 import { useAuth } from "./hooks/useAuth.js";
-import { useCarrinho } from "./hooks/useCarrinho.js";
+import { useCarrinho, type ItemCarrinho } from "./hooks/useCarrinho.js";
 import { useDebounce } from "./hooks/useDebounce.js";
 import { useFavoritos } from "./hooks/useFavoritos.js";
 import { useLocalizacao } from "./hooks/useLocalizacao.js";
 import { useProducts } from "./hooks/useProducts.js";
 import { useRecentes } from "./hooks/useRecentes.js";
 import { useTema } from "./hooks/useTema.js";
+import { useConta } from "./hooks/useConta.js";
+import { useAvaliacoes } from "./hooks/useAvaliacoes.js";
+import { escopoSessaoAtual, EVENTO_SESSAO_EXPIRADA } from "./lib/sessao.js";
+import { limparTokenDaUrl } from "./lib/recuperacao.js";
 import { api } from "./lib/api.js";
 import { formatarMoeda, normalizar, podeAvaliar } from "./lib/utils.js";
 import { Header } from "./components/Header.js";
@@ -26,15 +30,27 @@ type Produto = ProdutoResponse;
 // Tipos inline removidos - agora usam tipos nomeados do shared.
 
 export default function App() {
-  const { usuario, login, cadastrar, logout } = useAuth();
-  const { produtos, carregando, recarregar } = useProducts();
+  const { usuario, carregando: verificandoSessao, login, cadastrar, logout, invalidarSessao } = useAuth();
+  const { produtos, carregando, erro: erroProdutos, recarregar } = useProducts();
   const { carrinho, setCarrinho, adicionarAoCarrinho, alterarQuantidade, limparCarrinho, quantidadeCarrinho } =
-    useCarrinho();
+    useCarrinho(produtos);
   const { tema, setTema } = useTema();
-  const { recentes, adicionarRecente } = useRecentes();
-  const [telaLogin, setTelaLogin] = useState(false);
+  const { recentes, adicionarRecente } = useRecentes(produtos);
+  const [tokenInicial, setTokenInicial] = useState(
+    () => new URLSearchParams(window.location.search).get("resetToken") ?? "",
+  );
+  const [telaLogin, setTelaLogin] = useState(Boolean(tokenInicial));
   const [mensagem, setMensagem] = useState("");
-  const { favoritos, alternarFavorito, setFavoritos } = useFavoritos({ usuarioLogado: !!usuario, onErro: setMensagem });
+  const { favoritos, alternarFavorito, setFavoritos } = useFavoritos({
+    usuarioLogado: !!usuario,
+    usuarioId: usuario?.id,
+    onErro: setMensagem,
+  });
+  const { dadosConta, carregarConta, salvarEndereco } = useConta({
+    usuarioId: usuario?.id ?? null,
+    onFavoritos: setFavoritos,
+    onErro: setMensagem,
+  });
   const { detectarEndereco } = useLocalizacao({ usuarioLogado: !!usuario });
   const [enderecoSugerido, setEnderecoSugerido] = useState<CepResponse | null>(null);
   const [loginPrompt, setLoginPrompt] = useState<{ titulo: string; mensagem: string } | null>(null);
@@ -45,22 +61,56 @@ export default function App() {
   const buscaDebounced = useDebounce(busca, 300);
   const [categoriaSelecionada, setCategoriaSelecionada] = useState("Todas");
   const [processandoPedido, setProcessandoPedido] = useState(false);
+  const pedidoEmCurso = useRef<symbol | null>(null);
   const [pedidoConfirmado, setPedidoConfirmado] = useState<{ id: string; total: number; metodo: string } | null>(null);
   /** Produtos da compra recém-concluída, esperando avaliação. */
   const [paraAvaliar, setParaAvaliar] = useState<AvaliacaoPendente[] | null>(null);
   const [resumoPedido, setResumoPedido] = useState<{
+    chaveIdempotencia: string;
+    itens: ItemCarrinho[];
     subtotal: number;
     frete: number;
     desconto: number;
     total: number;
     cupom: string;
     metodo: string;
-    itensIds: string[];
   } | null>(null);
   const [contaAberta, setContaAberta] = useState(false);
-  const [dadosConta, setDadosConta] = useState<Conta | null>(null);
   const [metodoPagamento] = useState("pix");
-  const [avaliacoes, setAvaliacoes] = useState<AvaliacaoResponse[]>([]);
+  const { avaliacoes, recarregar: carregarAvaliacoes } = useAvaliacoes(produtoSelecionado?.id ?? null, setMensagem);
+  const escopoRender = escopoSessaoAtual();
+  const mensagemDaConta = useCallback(
+    (texto: string) => {
+      if (escopoRender === escopoSessaoAtual()) setMensagem(texto);
+    },
+    [escopoRender],
+  );
+
+  useEffect(() => {
+    limparTokenDaUrl();
+  }, []);
+  useEffect(() => {
+    const expirada = () => {
+      setTelaLogin(true);
+      setMensagem("Sua sessão expirou. Faça login novamente.");
+    };
+    window.addEventListener(EVENTO_SESSAO_EXPIRADA, expirada);
+    return () => window.removeEventListener(EVENTO_SESSAO_EXPIRADA, expirada);
+  }, []);
+
+  useLayoutEffect(() => {
+    setEnderecoSugerido(null);
+    setLoginPrompt(null);
+    setContaAberta(false);
+    setConfirmarSaida(false);
+    setCarrinhoAberto(false);
+    setProdutoSelecionado(null);
+    setResumoPedido(null);
+    setPedidoConfirmado(null);
+    setParaAvaliar(null);
+    pedidoEmCurso.current = null;
+    setProcessandoPedido(false);
+  }, [usuario?.id]);
 
   const grupos = useMemo(() => {
     return {
@@ -85,56 +135,13 @@ export default function App() {
     });
   }, [produtos, buscaDebounced, categoriaSelecionada]);
 
-  /**
-   * Posição do produto no catálogo cheio, para escolher a foto de fallback.
-   *
-   * Nenhum produto do seed tem `imagem` no banco, então a foto vem da lista
-   * padrão do `imagemDe`, e essa lista é escolhida **por posição**. Passando o
-   * índice da lista local de cada seção, o mesmo produto aparecia com fotos
-   * diferentes na vitrine, nos favoritos, no histórico e no modal. Buscar no
-   * catálogo inteiro dá a mesma foto em qualquer tela.
-   *
-   * `Math.max` protege o `-1` do `findIndex` quando o produto não está no
-   * catálogo (favorito de uma conta antiga, por exemplo): sem ele, o índice
-   * negativo cairia no último item da lista.
-   */
-  const indiceDe = useCallback(
-    (id: string) =>
-      Math.max(
-        0,
-        produtos.findIndex((p) => p.id === id),
-      ),
-    [produtos],
-  );
-
   const abrirProduto = useCallback(
     (produto: Produto) => {
       setProdutoSelecionado(produto);
-      setAvaliacoes([]);
-      adicionarRecente(produto);
-      api
-        .get<AvaliacaoResponse[]>(`/avaliacoes/${encodeURIComponent(produto.id)}`)
-        .then((dados) => setAvaliacoes(Array.isArray(dados) ? dados : []))
-        .catch(() => setMensagem("Não foi possível carregar as avaliações agora."));
+      adicionarRecente(produto.id);
     },
     [adicionarRecente],
   );
-
-  const carregarConta = useCallback(async () => {
-    try {
-      const dados = await api.get<Conta>("/conta");
-      setDadosConta(dados);
-      setFavoritos(dados.favoritos.map((produto) => produto.id));
-    } catch (err) {
-      setMensagem(err instanceof Error ? err.message : "Erro ao carregar conta.");
-    }
-  }, [setFavoritos]);
-
-  useEffect(() => {
-    if (usuario) {
-      void carregarConta();
-    }
-  }, [usuario, carregarConta]);
 
   /**
    * Geolocalização ao entrar no site, e só com sessão ativa.
@@ -159,17 +166,16 @@ export default function App() {
     };
   }, [usuario, detectarEndereco]);
 
-  const salvarEndereco = useCallback(async (endereco: Record<string, string>) => {
-    const dados = await api.put<{ perfil: Conta["perfil"] }>("/conta/endereco", endereco);
-    setDadosConta((atual) => (atual ? { ...atual, perfil: dados.perfil } : atual));
-  }, []);
-
-  const enviarAvaliacao = useCallback(async (produtoId: string, nota: number, comentario: string) => {
-    await api.post(`/avaliacoes/${encodeURIComponent(produtoId)}`, { nota, comentario });
-    setMensagem("Avaliação enviada. Obrigado!");
-    const lista = await api.get<AvaliacaoResponse[]>(`/avaliacoes/${encodeURIComponent(produtoId)}`);
-    if (Array.isArray(lista)) setAvaliacoes(lista);
-  }, []);
+  const enviarAvaliacao = useCallback(
+    async (produtoId: string, nota: number, comentario: string) => {
+      const escopo = escopoSessaoAtual();
+      await api.post(`/avaliacoes/${encodeURIComponent(produtoId)}`, { nota, comentario });
+      if (escopo !== escopoSessaoAtual()) return;
+      setMensagem("Avaliação enviada. Obrigado!");
+      await Promise.all([carregarConta(), carregarAvaliacoes(produtoId)]);
+    },
+    [carregarConta, carregarAvaliacoes],
+  );
 
   /**
    * Envia as várias avaliações do pop-up pós-compra e devolve o aviso.
@@ -183,9 +189,11 @@ export default function App() {
    */
   const enviarAvaliacoes = useCallback(
     async (notas: NotaEnviada[]): Promise<string> => {
+      const escopo = escopoSessaoAtual();
       const resultados = await Promise.allSettled(
         notas.map((item) => api.post(`/avaliacoes/${encodeURIComponent(item.produtoId)}`, item)),
       );
+      if (escopo !== escopoSessaoAtual()) return "";
       const falhas = resultados.filter((r) => r.status === "rejected").length;
 
       if (falhas > 0 && falhas === notas.length) {
@@ -207,27 +215,30 @@ export default function App() {
     [carregarConta],
   );
 
-  const carregarAvaliacoes = useCallback(async (produtoId: string) => {
-    try {
-      const lista = await api.get<AvaliacaoResponse[]>(`/avaliacoes/${encodeURIComponent(produtoId)}`);
-      if (Array.isArray(lista)) setAvaliacoes(lista);
-    } catch {
-      setMensagem("Não foi possível carregar as avaliações.");
-    }
-  }, []);
-
   const confirmarPedido = useCallback(async () => {
-    if (!resumoPedido || !usuario) return;
+    if (!resumoPedido || !usuario || pedidoEmCurso.current) return;
 
+    const operacao = Symbol("pedido");
+    pedidoEmCurso.current = operacao;
+    const escopo = escopoSessaoAtual();
     setProcessandoPedido(true);
     try {
-      const itensSelecionados = carrinho.filter((item) => resumoPedido.itensIds.includes(item.id));
+      const itensSelecionados = resumoPedido.itens;
       const dados = await api.post<{ pedido: { id: string; total_final: number } }>("/pedidos", {
+        chaveIdempotencia: resumoPedido.chaveIdempotencia,
         metodoPagamento: resumoPedido.metodo,
         cupomCodigo: resumoPedido.cupom !== "Nenhum" ? resumoPedido.cupom : undefined,
         itens: itensSelecionados.map((item) => ({ produtoId: item.id, quantidade: item.quantidadeCarrinho })),
       });
-      setCarrinho((atual) => atual.filter((item) => !resumoPedido.itensIds.includes(item.id)));
+      if (escopo !== escopoSessaoAtual() || pedidoEmCurso.current !== operacao) return;
+      setCarrinho((atual) =>
+        atual.flatMap((item) => {
+          const comprado = itensSelecionados.find((selecionado) => selecionado.id === item.id);
+          if (!comprado) return [item];
+          const restante = item.quantidadeCarrinho - comprado.quantidadeCarrinho;
+          return restante > 0 ? [{ ...item, quantidadeCarrinho: restante }] : [];
+        }),
+      );
       setCarrinhoAberto(false);
       setResumoPedido(null);
       setPedidoConfirmado({
@@ -245,11 +256,16 @@ export default function App() {
       void carregarConta();
       void recarregar();
     } catch (err) {
-      setMensagem(err instanceof Error ? err.message : "Não foi possível finalizar o pedido.");
+      if (escopo === escopoSessaoAtual() && pedidoEmCurso.current === operacao) {
+        setMensagem(err instanceof Error ? err.message : "Não foi possível finalizar o pedido.");
+      }
     } finally {
-      setProcessandoPedido(false);
+      if (pedidoEmCurso.current === operacao) {
+        pedidoEmCurso.current = null;
+        setProcessandoPedido(false);
+      }
     }
-  }, [resumoPedido, usuario, carrinho, carregarConta, recarregar, setCarrinho]);
+  }, [resumoPedido, usuario, carregarConta, recarregar, setCarrinho]);
 
   const handleFavoritar = useCallback(
     (produtoId: string) => {
@@ -350,13 +366,14 @@ export default function App() {
       // `useCoupon` valida um código corretamente, mas nenhum componente o
       // importa, então `cupomCodigo` chega sempre como `undefined` na rota.
       setResumoPedido({
+        chaveIdempotencia: crypto.randomUUID(),
+        itens: itensSelecionados,
         subtotal,
         frete,
         desconto: 0,
         total,
         cupom: "Nenhum",
         metodo: metodoPagamento,
-        itensIds: ids,
       });
       setCarrinhoAberto(false);
     },
@@ -368,33 +385,19 @@ export default function App() {
   // interface para elas. O redirecionamento para `/admin.html` foi removido
   // porque o arquivo não existe mais — ele levava o admin a uma página de erro
   // sem volta, a não ser digitando a URL de novo.
-  const handleLogin = useCallback(
-    async (email: string, senha: string) => {
-      const usuarioLogado = await login(email, senha);
-      await carregarConta();
-      return usuarioLogado;
-    },
-    [login, carregarConta],
-  );
-
-  const handleCadastrar = useCallback(
-    async (nome: string, email: string, senha: string) => {
-      const usuarioLogado = await cadastrar(nome, email, senha);
-      await carregarConta();
-      return usuarioLogado;
-    },
-    [cadastrar, carregarConta],
-  );
-
   const handleRecuperarSenha = useCallback(async (email: string) => {
-    await api.post("/recuperar-senha", { email });
-    setMensagem("Se o e-mail estiver cadastrado, enviaremos as instruções de recuperação.");
+    return api.post<RecuperarSenhaResponse>("/recuperar-senha", { email });
   }, []);
 
-  const handleRedefinirSenha = useCallback(async (token: string, senha: string) => {
-    await api.post("/redefinir-senha", { token, senha });
-    setMensagem("Senha redefinida com sucesso.");
-  }, []);
+  const handleRedefinirSenha = useCallback(
+    async (token: string, senha: string) => {
+      await api.post("/redefinir-senha", { token, senha });
+      invalidarSessao();
+      setTokenInicial("");
+      setMensagem("Senha redefinida com sucesso. Entre com sua nova senha.");
+    },
+    [invalidarSessao],
+  );
 
   /**
    * Encerrar a sessão redireciona para a tela de login em vez de devolver o
@@ -406,7 +409,6 @@ export default function App() {
     try {
       await logout();
       setConfirmarSaida(false);
-      setDadosConta(null);
       setContaAberta(false);
       setCarrinhoAberto(false);
       setProdutoSelecionado(null);
@@ -432,17 +434,28 @@ export default function App() {
     setMensagem("");
   }, []);
 
-  if (!usuario && telaLogin) {
+  if (verificandoSessao)
+    return (
+      <div className="loading" role="status">
+        Verificando sua sessão...
+      </div>
+    );
+
+  if (telaLogin) {
     return (
       <>
         <LoginPage
           tema={tema}
           onToggleTema={() => setTema(tema === "claro" ? "escuro" : "claro")}
-          onLogin={handleLogin}
-          onCadastrar={handleCadastrar}
+          tokenInicial={tokenInicial}
+          onLogin={login}
+          onCadastrar={cadastrar}
           onRecuperarSenha={handleRecuperarSenha}
           onRedefinirSenha={handleRedefinirSenha}
-          onFechar={() => setTelaLogin(false)}
+          onFechar={() => {
+            setTokenInicial("");
+            setTelaLogin(false);
+          }}
           onMensagem={setMensagem}
         />
         {/* A tela de login substitui o layout inteiro. Sem este `Toast` aqui, o
@@ -485,10 +498,15 @@ export default function App() {
             </div>
           </div>
           <div className="hero-card">
-            <img
-              src="https://images.unsplash.com/photo-1511497584788-876760111969?auto=format&fit=crop&w=900&q=80"
-              alt="Banner principal"
-            />
+            {/* Banner local, como as fotos dos produtos. Era uma URL do Unsplash,
+                e era a única imagem da lojaDepending de serviço de terceiro: se o
+                serviço caísse, o topo da página ficaria com um buraco enquanto o
+                resto continuava inteiro.
+
+                Arquivo próprio em 3:2, e não o `teclado.jpg` quadrado: a caixa do
+                banner é deitada, e forçar a foto quadrada nela cortaria as laterais
+                da foto. */}
+            <img src="/imagens/banner.jpg" alt="Banner principal" />
           </div>
         </section>
 
@@ -504,7 +522,6 @@ export default function App() {
             <ProductCard
               key={produto.id}
               produto={produto}
-              indice={indiceDe(produto.id)}
               variante="featured"
               favorito={favoritos.includes(produto.id)}
               onAbrir={abrirProduto}
@@ -529,7 +546,6 @@ export default function App() {
                   <ProductCard
                     key={produto.id}
                     produto={produto}
-                    indice={indiceDe(produto.id)}
                     variante="compact"
                     favorito={true}
                     onAbrir={abrirProduto}
@@ -566,7 +582,20 @@ export default function App() {
           </select>
         </div>
 
-        {carregando ? (
+        {erroProdutos ? (
+          <section className="empty-state" role="alert">
+            <p>Não foi possível carregar o catálogo. {erroProdutos}</p>
+            <button
+              type="button"
+              className="secondary-btn"
+              onClick={() => {
+                void recarregar();
+              }}
+            >
+              Tentar novamente
+            </button>
+          </section>
+        ) : carregando ? (
           <p className="loading">Carregando catálogo...</p>
         ) : (
           <section className="catalog-grid">
@@ -574,7 +603,6 @@ export default function App() {
               <ProductCard
                 key={produto.id}
                 produto={produto}
-                indice={indiceDe(produto.id)}
                 favorito={favoritos.includes(produto.id)}
                 onAbrir={abrirProduto}
                 onFavoritar={handleFavoritar}
@@ -613,7 +641,6 @@ export default function App() {
                 <ProductCard
                   key={produto.id}
                   produto={produto}
-                  indice={indiceDe(produto.id)}
                   variante="compact"
                   onAbrir={abrirProduto}
                   onFavoritar={handleFavoritar}
@@ -681,22 +708,22 @@ export default function App() {
           produto={produtoSelecionado}
           usuario={usuario}
           avaliacoes={avaliacoes}
-          indice={indiceDe(produtoSelecionado.id)}
           podeAvaliar={podeAvaliar(
             dadosConta?.pedidos ?? [],
             dadosConta?.minhasAvaliacoes ?? [],
             produtoSelecionado.id,
           )}
           onFechar={() => setProdutoSelecionado(null)}
-          onAdicionarAoCarrinho={adicionarAoCarrinho}
+          key={produtoSelecionado.id}
+          onAdicionarAoCarrinho={handleAdicionarAoCarrinho}
           onEnviarAvaliacao={enviarAvaliacao}
-          onCarregarAvaliacoes={carregarAvaliacoes}
-          onMensagem={setMensagem}
+          onMensagem={mensagemDaConta}
         />
       )}
 
       {contaAberta && usuario && (
         <AccountModal
+          key={usuario.id}
           usuario={usuario}
           dadosConta={dadosConta}
           onFechar={() => setContaAberta(false)}
@@ -704,7 +731,7 @@ export default function App() {
           enderecoSugerido={enderecoSugerido}
           onDesfavoritar={handleDesfavoritar}
           onAbrirProduto={handleAbrirFavorito}
-          onMensagem={setMensagem}
+          onMensagem={mensagemDaConta}
         />
       )}
 
@@ -776,7 +803,9 @@ export default function App() {
           onEnviar={async (notas) => {
             // O aviso só é mostrado depois de fechar a janela: enquanto ela
             // estiver aberta o toast ficaria escondido atrás do overlay.
+            const escopo = escopoSessaoAtual();
             const aviso = await enviarAvaliacoes(notas);
+            if (escopo !== escopoSessaoAtual()) return aviso;
             setParaAvaliar(null);
             setMensagem(aviso);
             return aviso;

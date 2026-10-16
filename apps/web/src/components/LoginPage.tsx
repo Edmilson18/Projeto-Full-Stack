@@ -1,13 +1,15 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Eye, EyeOff, Moon, Sun } from "lucide-react";
-import type { UsuarioPublico } from "@loja/shared";
+import type { RecuperarSenhaResponse, UsuarioPublico } from "@loja/shared";
+import { limparTokenDaUrl } from "../lib/recuperacao.js";
 
 type LoginPageProps = {
   tema: "claro" | "escuro";
   onToggleTema: () => void;
   onLogin: (email: string, senha: string) => Promise<UsuarioPublico>;
   onCadastrar: (nome: string, email: string, senha: string) => Promise<UsuarioPublico>;
-  onRecuperarSenha: (email: string) => Promise<void>;
+  onRecuperarSenha: (email: string) => Promise<RecuperarSenhaResponse>;
+  tokenInicial?: string;
   onRedefinirSenha: (token: string, senha: string) => Promise<void>;
   onFechar: () => void;
   onMensagem: (msg: string) => void;
@@ -22,6 +24,7 @@ export function LoginPage({
   onRedefinirSenha,
   onFechar,
   onMensagem,
+  tokenInicial,
 }: LoginPageProps) {
   const [modoCadastro, setModoCadastro] = useState(false);
   const [mostrarSenha, setMostrarSenha] = useState(false);
@@ -32,8 +35,11 @@ export function LoginPage({
   const [recuperacaoAberta, setRecuperacaoAberta] = useState(false);
   const [emailRecuperacao, setEmailRecuperacao] = useState("");
   const [tokenRecuperacao, setTokenRecuperacao] = useState(
-    () => new URLSearchParams(window.location.search).get("resetToken") ?? "",
+    () => tokenInicial ?? new URLSearchParams(window.location.search).get("resetToken") ?? "",
   );
+  useEffect(() => {
+    limparTokenDaUrl();
+  }, []);
   const [novaSenha, setNovaSenha] = useState("");
   const [confirmacaoNovaSenha, setConfirmacaoNovaSenha] = useState("");
 
@@ -58,7 +64,9 @@ export function LoginPage({
     e.preventDefault();
     setCarregando(true);
     try {
-      await onRecuperarSenha(emailRecuperacao);
+      const resposta = await onRecuperarSenha(emailRecuperacao);
+      onMensagem(resposta.mensagem);
+      if (resposta.token) setTokenRecuperacao(resposta.token);
       setRecuperacaoAberta(false);
     } catch (err) {
       onMensagem(err instanceof Error ? err.message : "Erro ao recuperar senha.");
@@ -175,7 +183,13 @@ export function LoginPage({
 
       {(recuperacaoAberta || tokenRecuperacao) && (
         <div className="modal-backdrop">
-          <form className="recovery-dialog" onSubmit={tokenRecuperacao ? handleRedefinir : handleRecuperar}>
+          <form
+            className="recovery-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="titulo-recuperacao"
+            onSubmit={tokenRecuperacao ? handleRedefinir : handleRecuperar}
+          >
             <button
               type="button"
               className="close-btn"
@@ -188,7 +202,7 @@ export function LoginPage({
             </button>
             {tokenRecuperacao ? (
               <>
-                <h2>Definir nova senha</h2>
+                <h2 id="titulo-recuperacao">Definir nova senha</h2>
                 <p>Crie uma senha com pelo menos 6 caracteres.</p>
                 <label>
                   Nova senha
@@ -216,9 +230,11 @@ export function LoginPage({
               </>
             ) : (
               <>
-                <h2>Recuperar senha</h2>
-                <p>Informe seu e-mail para receber as instruções.</p>
+                <h2 id="titulo-recuperacao">Recuperar senha</h2>
+                <p>A recuperação por e-mail ainda não está disponível nesta demonstração.</p>
+                <label htmlFor="email-recuperacao">E-mail da conta</label>
                 <input
+                  id="email-recuperacao"
                   type="email"
                   required
                   value={emailRecuperacao}
@@ -226,7 +242,7 @@ export function LoginPage({
                   placeholder="voce@email.com"
                 />
                 <button className="primary-btn full" disabled={carregando}>
-                  {carregando ? "Enviando..." : "Enviar instruções"}
+                  {carregando ? "Aguarde..." : "Solicitar recuperação"}
                 </button>
               </>
             )}

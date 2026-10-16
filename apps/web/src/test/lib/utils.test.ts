@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { MinhaAvaliacao, PedidoResponse } from "@loja/shared";
-import { normalizar, podeAvaliar } from "../../lib/utils.js";
+import { imagemDe, normalizar, podeAvaliar } from "../../lib/utils.js";
 
 /**
  * A busca do catálogo compara com `includes`, que é literal. Se a normalização
@@ -139,5 +139,109 @@ describe("podeAvaliar", () => {
     const semData = { ...pedido("processando", ["prod-cam"], COMPRA), criado_em: null };
     expect(podeAvaliar([semItens], [], "prod-cam")).toBe(false);
     expect(podeAvaliar([semData], [], "prod-cam")).toBe(false);
+  });
+});
+
+/**
+ * A imagem do produto.
+ *
+ * O defeito que estes casos travam: a foto era escolhida pela **posição** do
+ * produto na lista, e a posição muda com o filtro de busca, com a ordenação e
+ * com a seção da tela. O mesmo produto saía com imagens diferentes em cada uma,
+ * e nenhuma era dele — a cadeira aparecia com a foto de uma placa-mãe.
+ */
+
+/** Desenho já decodificado, que é como se lê o SVG nos testes. */
+function svgDe(nome: string): string {
+  return decodeURIComponent(imagemDe({ nome, imagem: null }));
+}
+describe("imagemDe", () => {
+  it("usa a foto do produto quando ele tem uma", () => {
+    const url = "https://exemplo.com/cadeira.jpg";
+    expect(imagemDe({ nome: "Cadeira Ergonômica", imagem: url })).toBe(url);
+  });
+
+  it("usa o caminho local da foto como veio, sem reescrever", () => {
+    // O formato das fotos do seed: `/imagens/teclado.jpg`, servida pelo
+    // próprio site. Reescrever o caminho (por exemplo, prefixando a API)
+    // quebraria a foto, porque ela não vem da API.
+    const local = "/imagens/teclado.jpg";
+    expect(imagemDe({ nome: "Teclado Mecânico RGB Pro", imagem: local })).toBe(local);
+  });
+
+  it("não inventa foto para produto sem imagem, e sim desenha o produto", () => {
+    const desenho = imagemDe({ nome: "Cadeira Ergonômica Flexform", imagem: null });
+
+    // A garantia que importa: nenhum produto pode sair com a imagem de outro.
+    expect(desenho).not.toContain("images.unsplash.com");
+    expect(desenho.startsWith("data:image/svg+xml")).toBe(true);
+    // "sem foto" no lugar do desenho deixava a vitrine com cara de defeito.
+    expect(svgDe("Cadeira Ergonômica Flexform")).not.toContain("sem foto");
+  });
+
+  it("desenha um ícone por produto, e não a sigla", () => {
+    // Cada produto ganha o ícone do que ele é. É o que substitui a foto que
+    // nunca esteve disponível.
+    // Cadeira: base em pé. Teclado: moldura com teclas.
+    expect(svgDe("Cadeira Ergonômica Flexform")).toContain("M12 16.5v3");
+    expect(svgDe("Teclado Mecânico RGB Pro")).toContain('<rect x="2" y="5" width="20" height="14"');
+
+    // Cadeira e câmera saem diferentes, apesar de as duas terem inicial "C".
+    expect(svgDe("Cadeira Ergonômica Flexform")).not.toBe(svgDe("Câmera de Segurança 4K"));
+  });
+
+  it("reconhece o produto mesmo com adjetivo antes do nome", () => {
+    // O nome vem do cadastro, e quem cadastrou escolhe como escreve: "Mouse
+    // Gamer", "Teclado Mecânico". A regra não pode depender da palavra estar
+    // no começo do nome.
+    expect(svgDe("Mouse Gamer Pulsefire")).toContain("M12 2.5v6");
+    expect(svgDe("Monitor Gamer 27'' 165Hz")).toContain("M9 20.5h6");
+  });
+
+  it("cai na sigla quando o nome não descreve nenhum produto conhecido", () => {
+    // "Cadeira" e "Câmera" têm ícone próprio, então a sigla fica para o que
+    // sobrar. Precisa do elemento `<text>`: texto solto dentro do grupo do
+    // ícone não desenha nada e o cartão sairia em branco.
+    const svg = svgDe("Kit Desk Auxiliar");
+
+    expect(svg).toContain("<text");
+    expect(svg).toContain(">KT<");
+  });
+
+  it("trata imagem vazia ou só com espaço como ausente", () => {
+    // `produtoInput` transforma `""` em ausente, mas dado vindo do banco ou de
+    // uma edição antiga pode sobrar espaço em branco.
+    expect(imagemDe({ nome: "Teclado", imagem: "" })).toContain("data:image/svg+xml");
+    expect(imagemDe({ nome: "Teclado", imagem: "   " })).toContain("data:image/svg+xml");
+  });
+
+  it("mantém o desenho estável para o mesmo produto", () => {
+    const nome = { nome: "Monitor Gamer 27'' 165Hz", imagem: null };
+    expect(imagemDe(nome)).toBe(imagemDe(nome));
+  });
+
+  it("dá desenhos diferentes a produtos diferentes", () => {
+    // Se todos caíssem no mesmo desenho, a vitrine ficaria com cópias
+    // iguais — o que é a mesma falha da foto genérica, só menos confusa.
+    const nomes = [
+      "Cadeira Ergonômica Flexform",
+      "Teclado Mecânico RGB Pro",
+      "Câmera de Segurança 4K",
+      "Mouse Gamer Pulsefire",
+      "Monitor Gamer 27'' 165Hz",
+      "Headset Wireless Studio",
+    ];
+    const desenhos = nomes.map((nome) => imagemDe({ nome, imagem: null }));
+
+    expect(new Set(desenhos).size).toBe(nomes.length);
+  });
+
+  it("escapa o SVG para não quebrar quando o nome traz caracteres especiais", () => {
+    // `viewBox="0 0 400 300"` usa aspas e `#` nas cores; sem escape o atributo
+    // seria lido só até o primeiro espaço e o desenho viraria lixo.
+    const desenho = decodeURIComponent(imagemDe({ nome: 'Monitor 27" & <teste>', imagem: null }));
+
+    expect(desenho).toContain('viewBox="0 0 400 300"');
+    expect(desenho).toContain('fill="#e');
   });
 });

@@ -1,6 +1,5 @@
 import type { FastifyInstance } from "fastify";
 import { criarApp } from "../app.js";
-import { limparSessoes } from "../rotas/auth.js";
 
 /**
  * Cliente HTTP para os testes de integração.
@@ -41,7 +40,6 @@ function lerCookie(setCookies: Array<{ name: string; value: string }>, nome: str
 export async function iniciarContexto(opcoes: { semRateLimit?: boolean } = {}): Promise<Contexto> {
   const app = criarApp({ semRateLimit: opcoes.semRateLimit ?? true });
   await app.ready();
-  limparSessoes();
 
   const novoCliente = (): Cliente => {
     // Par `nome=valor` do cookie de sessão, ou null para anônimo.

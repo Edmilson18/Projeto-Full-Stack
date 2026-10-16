@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { Heart } from "lucide-react";
 import type { CepResponse, Conta, UsuarioPublico } from "@loja/shared";
 import { formatarMoeda, imagemDe } from "../lib/utils.js";
@@ -45,40 +45,26 @@ export function AccountModal({
   onAbrirProduto,
   onMensagem,
 }: AccountModalProps) {
-  const [cep, setCep] = useState(dadosConta?.perfil.cep ?? "");
-  const [rua, setRua] = useState(dadosConta?.perfil.rua ?? "");
-  const [numero, setNumero] = useState(dadosConta?.perfil.numero ?? "");
-  const [complemento, setComplemento] = useState(dadosConta?.perfil.complemento ?? "");
-  const [bairro, setBairro] = useState(dadosConta?.perfil.bairro ?? "");
-  const [cidade, setCidade] = useState(dadosConta?.perfil.cidade ?? "");
-  const [estado, setEstado] = useState(dadosConta?.perfil.estado ?? "");
+  const [rascunho, setRascunho] = useState<Record<string, string>>({});
   const [salvando, setSalvando] = useState(false);
-
-  // O endereço detectado chega depois do primeiro render, então o preenchimento
-  // acontece em efeito. Só o que está vazio: quem já tem rua e número
-  // cadastrados não deve ver o formulário sobrescrito pela rua do quarteirão,
-  // que vem sem número e sem complemento.
-  //
-  // O `jaPreenchiu` corta o efeito na segunda passada. Sem ele, o efeito roda
-  // de novo a cada tecla nos campos, porque eles estão na lista de dependências
-  // — aí uma detecção atrasada sobrescreveria o que a pessoa já começou a
-  // digitar.
-  const jaPreenchiu = useRef(false);
-  useEffect(() => {
-    if (!enderecoSugerido || jaPreenchiu.current) return;
-    jaPreenchiu.current = true;
-    if (!cep && enderecoSugerido.cep) setCep(enderecoSugerido.cep);
-    if (!rua && enderecoSugerido.rua) setRua(enderecoSugerido.rua);
-    if (!bairro && enderecoSugerido.bairro) setBairro(enderecoSugerido.bairro);
-    if (!cidade && enderecoSugerido.cidade) setCidade(enderecoSugerido.cidade);
-    if (!estado && enderecoSugerido.estado) setEstado(enderecoSugerido.estado);
-  }, [enderecoSugerido, cep, rua, bairro, cidade, estado]);
+  // Perfil recebido depois da montagem preenche os campos ainda não editados.
+  // Até um campo apagado pela pessoa prevalece sobre perfil e geolocalização.
+  const endereco: Record<string, string> = {
+    cep: dadosConta?.perfil.cep || enderecoSugerido?.cep || "",
+    rua: dadosConta?.perfil.rua || enderecoSugerido?.rua || "",
+    numero: dadosConta?.perfil.numero ?? "",
+    complemento: dadosConta?.perfil.complemento ?? "",
+    bairro: dadosConta?.perfil.bairro || enderecoSugerido?.bairro || "",
+    cidade: dadosConta?.perfil.cidade || enderecoSugerido?.cidade || "",
+    estado: dadosConta?.perfil.estado || enderecoSugerido?.estado || "",
+    ...rascunho,
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSalvando(true);
     try {
-      await onSalvarEndereco({ cep, rua, numero, complemento, bairro, cidade, estado });
+      await onSalvarEndereco(endereco);
       onMensagem("Endereço salvo com sucesso.");
     } catch (err) {
       onMensagem(err instanceof Error ? err.message : "Erro ao salvar endereço.");
@@ -139,30 +125,13 @@ export function AccountModal({
                     {rotulo}
                     <input
                       name={campo}
-                      value={
-                        campo === "cep"
-                          ? cep
-                          : campo === "rua"
-                            ? rua
-                            : campo === "numero"
-                              ? numero
-                              : campo === "complemento"
-                                ? complemento
-                                : campo === "bairro"
-                                  ? bairro
-                                  : campo === "cidade"
-                                    ? cidade
-                                    : estado
-                      }
+                      value={endereco[campo] ?? ""}
                       onChange={(e) => {
                         const valor = e.target.value;
-                        if (campo === "cep") setCep(valor);
-                        else if (campo === "rua") setRua(valor);
-                        else if (campo === "numero") setNumero(valor);
-                        else if (campo === "complemento") setComplemento(valor);
-                        else if (campo === "bairro") setBairro(valor);
-                        else if (campo === "cidade") setCidade(valor);
-                        else if (campo === "estado") setEstado(valor);
+                        setRascunho((anterior) => ({
+                          ...anterior,
+                          [campo]: campo === "estado" ? valor.toUpperCase() : valor,
+                        }));
                       }}
                       inputMode={campo === "cep" ? "numeric" : undefined}
                       maxLength={campo === "cep" ? 9 : campo === "estado" ? 2 : undefined}
@@ -182,7 +151,7 @@ export function AccountModal({
               </div>
               {dadosConta.favoritos.length ? (
                 <ul className="fav-list">
-                  {dadosConta.favoritos.map((produto, indice) => (
+                  {dadosConta.favoritos.map((produto) => (
                     <li key={produto.id} className="fav-item">
                       {/* A imagem e o texto são um botão só, e o remover fica
                           ao lado como botão separado: aninhar um `<button>`
@@ -194,7 +163,7 @@ export function AccountModal({
                         aria-label={`Ver ${produto.nome}`}
                         onClick={() => onAbrirProduto(produto.id)}
                       >
-                        <img src={imagemDe(produto, indice)} alt="" />
+                        <img src={imagemDe(produto)} alt="" />
                         <span className="fav-info">
                           <strong>{produto.nome}</strong>
                           <span>{formatarMoeda(produto.preco)}</span>

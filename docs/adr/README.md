@@ -29,7 +29,7 @@ ordem de gravação.
 | --- | --- | --- |
 | [001](001-linter-oxlint.md) | Linter: oxlint no lugar do ESLint | Aceita |
 | [002](002-framework-api-fastify.md) | Framework de API: Fastify | Aceita |
-| [003](003-monorepo-pnpm-turborepo.md) | Monorepo com workspaces e cache de build | Parcialmente adotada — npm workspaces, sem Turborepo |
+| [003](003-monorepo-pnpm-turborepo.md) | Monorepo com npm workspaces | Aceita — revisada após alinhamento das dependências |
 | [004](004-dinheiro-em-centavos.md) | Valores monetários em centavos inteiros | Aceita |
 | [005](005-banco-postgresql-neon.md) | Banco de dados: PostgreSQL sobre SQLite | Aceita |
 | [006](006-deploy-vercel-neon.md) | Deploy: Vercel Hobby com Neon Free | Proposta |

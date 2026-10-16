@@ -3,8 +3,7 @@
   //   - API em http://localhost:3000
   //   - Vite em http://localhost:5173
   //
-  // Substitui a configuracao anterior, que apontava para a porta 8080, onde nada
-  // rodava. As configuracoes ficam em compound para_os dois subindo juntos.
+  // Execute `npm run dev` antes de abrir a configuração do navegador.
   "version": "0.2.0",
   "configurations": [
     {
@@ -12,7 +11,7 @@
       "request": "launch",
       "name": "Abrir loja no navegador (Vite)",
       "url": "http://localhost:5173",
-      "webRoot": "${workspaceFolder}/src"
+      "webRoot": "${workspaceFolder}/apps/web"
     },
     {
       "type": "node",
@@ -20,16 +19,16 @@
       "name": "Depurar API (tsx src/server.ts)",
       "runtimeExecutable": "npx",
       "runtimeArgs": ["tsx", "src/server.ts"],
-      "cwd": "${workspaceFolder}",
+      "cwd": "${workspaceFolder}/apps/api",
       "skipFiles": ["<node_internals>/**"],
       "console": "integratedTerminal"
     },
     {
       "type": "node",
       "request": "launch",
-      "name": "Executar testes uma vez (vitest run)",
-      "runtimeExecutable": "npx",
-      "runtimeArgs": ["vitest", "run"],
+      "name": "Executar testes dos workspaces",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["test"],
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
       "skipFiles": ["<node_internals>/**"]

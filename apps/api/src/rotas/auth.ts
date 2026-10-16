@@ -27,6 +27,8 @@ import {
   verificarSenha,
 } from "../database.js";
 import { ErroApp } from "../erros.js";
+import { recuperacaoLocalHabilitada } from "../seguranca.js";
+import { validarEntrada } from "../validacao.js";
 
 export const COOKIE_SESSAO = "loja_session";
 const DURACAO_SESSAO_MS = 1000 * 60 * 60 * 12;
@@ -87,7 +89,7 @@ export function limparSessoes() {
 
 export async function registrarRotasAuth(app: FastifyInstance) {
   app.post("/api/login", { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } }, async (req, reply) => {
-    const { email, senha } = loginBody.parse(req.body);
+    const { email, senha } = validarEntrada(loginBody, req.body);
 
     const usuario = await buscarUsuarioPorEmail(email);
     // Mesma resposta para e-mail inexistente e senha errada: responder
@@ -120,7 +122,7 @@ export async function registrarRotasAuth(app: FastifyInstance) {
   app.get("/api/sessao", async (req) => sessaoResponse.parse({ usuario: (await usuarioDaRequisicao(req)) ?? null }));
 
   app.post("/api/cadastro", async (req, reply) => {
-    const { nome, email, senha } = cadastroBody.parse(req.body);
+    const { nome, email, senha } = validarEntrada(cadastroBody, req.body);
 
     if (await buscarUsuarioPorEmail(email)) throw ErroApp.conflito("Este e-mail já está cadastrado.");
 
@@ -147,28 +149,25 @@ export async function registrarRotasAuth(app: FastifyInstance) {
     "/api/recuperar-senha",
     { config: { rateLimit: { max: 5, timeWindow: "5 minutes" } } },
     async (req, reply) => {
-      const { email } = recuperarSenhaBody.parse(req.body);
-      const token = await criarTokenRedefinicaoSenha(email);
-
-      // Fora de produção o token volta na resposta, para não precisar de e-mail
-      // durante o desenvolvimento. A flag precisa ser explícita: sem
-      // NODE_ENV definido o padrão seria desenvolvimento, e o token vazaria
-      // em qualquer ambiente que não a tenha definido.
-      const exporToken = process.env.NODE_ENV !== "production";
-      if (token && exporToken) {
-        req.log.info({ email }, `Link de redefinição (desenvolvimento): /?resetToken=${token}`);
+      const { email } = validarEntrada(recuperarSenhaBody, req.body);
+      if (!recuperacaoLocalHabilitada(process.env.NODE_ENV, process.env.ALLOW_LOCAL_PASSWORD_RESET)) {
+        throw new ErroApp(
+          503,
+          "Recuperação de senha indisponível nesta demonstração. O envio de e-mail ainda não está disponível.",
+        );
       }
+      const token = await criarTokenRedefinicaoSenha(email);
 
       reply.code(200);
       return recuperarSenhaResponse.parse({
-        mensagem: "Se o e-mail estiver cadastrado, enviaremos as instruções de recuperação.",
-        ...(exporToken && token ? { token } : {}),
+        mensagem: "Se a conta existir, você poderá definir uma nova senha nesta demonstração local.",
+        ...(token ? { token } : {}),
       });
     },
   );
 
   app.post("/api/redefinir-senha", async (req) => {
-    const { token, senha } = redefinirSenhaBody.parse(req.body);
+    const { token, senha } = validarEntrada(redefinirSenhaBody, req.body);
 
     if (!(await redefinirSenhaComToken(token, senha))) {
       throw ErroApp.badRequest("O link de recuperação é inválido ou expirou.", "token_invalido");
